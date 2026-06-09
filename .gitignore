@@ -1,0 +1,26 @@
+# Foundry build artefacts
+out/
+cache/
+broadcast/
+
+# Node
+node_modules/
+
+# Secrets — never commit
+.env
+secrets/
+*.key
+*.pem
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+src.zip
+target/
+scratch/
+temp/

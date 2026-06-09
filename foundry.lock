@@ -1,0 +1,26 @@
+{
+  "lib/account-abstraction": {
+    "tag": {
+      "name": "v0.9.0",
+      "rev": "b36a1ed52ae00da6f8a4c8d50181e2877e4fa410"
+    }
+  },
+  "lib/openzeppelin-contracts": {
+    "tag": {
+      "name": "v5.6.1",
+      "rev": "5fd1781b1454fd1ef8e722282f86f9293cacf256"
+    }
+  },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "tag": {
+      "name": "v5.6.1",
+      "rev": "7bf4727aacdbfaa0f36cbd664654d0c9e1dc52bf"
+    }
+  },
+  "lib/safe-contracts": {
+    "tag": {
+      "name": "v1.5.0",
+      "rev": "dc437e8fba8b4805d76bcbd1c668c9fd3d1e83be"
+    }
+  }
+}
