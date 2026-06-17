@@ -32,7 +32,17 @@ export const config = {
   },
 
   chain: {
-    rpcUrl:  required('RPC_URL'),
+    // Derive RPC URL from CHAIN_ID so both server and Foundry share the same
+    // RPC_URL_MAINNET / RPC_URL_SEPOLIA vars — no separate RPC_URL needed.
+    get rpcUrl(): string {
+      const id = parseInt(required('CHAIN_ID'));
+      if (id === 1)        return required('RPC_URL_MAINNET');
+      if (id === 11155111) return required('RPC_URL_SEPOLIA');
+      // Fallback: allow an explicit RPC_URL override for other networks
+      const override = process.env['RPC_URL'];
+      if (override) return override;
+      throw new Error(`No RPC URL configured for CHAIN_ID=${id}. Set RPC_URL_MAINNET, RPC_URL_SEPOLIA, or RPC_URL.`);
+    },
     chainId: parseInt(required('CHAIN_ID')),
   },
 
@@ -73,8 +83,10 @@ export const config = {
     consumerSignerKey:      optional('IDOS_CONSUMER_SIGNER_PRIVATE_KEY'),
   },
 
-  admin: {
-    privateKey: required('ADMIN_PRIVATE_KEY'),
+  backend: {
+    // Hot wallet private key — signs onchain txs from the server.
+    // This is NOT the contract admin/owner wallet (ADMIN_ADDRESS in deploy .env).
+    privateKey: required('BACKEND_SIGNER_PRIVATE_KEY'),
   },
 
   vault: {

@@ -129,11 +129,10 @@ let _consumer: unknown = null;
 
 async function getIssuer() {
   if (_issuer) return _issuer;
-  // @ts-expect-error — dynamic import; types provided by @idos-network/issuer
   const { idOSIssuer } = await import('@idos-network/issuer');
   _issuer = await idOSIssuer.init({
     nodeUrl:             config.idos.nodeUrl,
-    signingKeyPair:      nacl.sign.keyPair.fromSecretKey(decodeb64(config.idos.issuerSigningKey)),
+    signingKeyPair:      nacl.sign.keyPair.fromSeed(decodeb64(config.idos.issuerSigningKey)),
     encryptionSecretKey: decodeb64(config.idos.issuerEncryptionKey),
   });
   return _issuer;

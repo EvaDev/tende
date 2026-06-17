@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@digitalcredentials/ed25519-verification-key-2020": "^5.0.0",
+    "@idos-network/issuer": "^1.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "ethers": "^6.13.2",
@@ -27,7 +28,7 @@
     "@types/node": "^25.9.2",
     "@types/pg": "^8.20.0",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3",
+    "typescript": "^5.9.3",
     "vitest": "^1.6.0"
   }
 }

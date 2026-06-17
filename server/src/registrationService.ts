@@ -40,7 +40,7 @@ function getProvider(): ethers.JsonRpcProvider {
 }
 
 function getAdminSigner(): ethers.Wallet {
-  return new ethers.Wallet(config.admin.privateKey, getProvider());
+  return new ethers.Wallet(config.backend.privateKey, getProvider());
 }
 
 // ── Step 1: Resolve passkey signer ───────────────────────────────────────────

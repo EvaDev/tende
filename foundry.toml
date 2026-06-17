@@ -15,10 +15,12 @@ remappings = [
     "forge-std/=lib/forge-std/src/",
 ]
 
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+
 [rpc_endpoints]
 mainnet = "${RPC_URL_MAINNET}"
 sepolia = "${RPC_URL_SEPOLIA}"
 
 [etherscan]
-mainnet = { key = "${ETHERSCAN_API_KEY}" }
-sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api-sepolia.etherscan.io/api" }
+mainnet = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=1" }
+sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=11155111" }

@@ -37,7 +37,7 @@ contract Deploy is Script {
     address internal consumer;
 
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_ADMIN_PRIVATE_KEY");
 
         vm.startBroadcast(deployerKey);
         _deployTokens();
@@ -53,7 +53,7 @@ contract Deploy is Script {
     // ── Deploy TreasuryToken proxies ──────────────────────────────────────────
 
     function _deployTokens() internal {
-        address admin         = vm.envAddress("ADMIN_ADDRESS");
+        address admin         = vm.envAddress("DEPLOYER_ADMIN_ADDRESS");
         uint256 initialSupply = vm.envUint("INITIAL_SUPPLY");
 
         ttzaImpl = address(new TreasuryToken());
@@ -72,7 +72,7 @@ contract Deploy is Script {
     // ── Deploy Vault proxy ────────────────────────────────────────────────────
 
     function _deployVault() internal {
-        address admin      = vm.envAddress("ADMIN_ADDRESS");
+        address admin      = vm.envAddress("DEPLOYER_ADMIN_ADDRESS");
         address swapRouter = vm.envAddress("SWAP_ROUTER_ADDRESS");
         address usdc       = vm.envAddress("USDC_ADDRESS");
 
@@ -86,8 +86,8 @@ contract Deploy is Script {
     // ── Deploy Consumer proxy ─────────────────────────────────────────────────
 
     function _deployConsumer() internal {
-        address admin           = vm.envAddress("ADMIN_ADDRESS");
-        address fallbackHandler = vm.envAddress("SAFE_FALLBACK_HANDLER");
+        address admin           = vm.envAddress("DEPLOYER_ADMIN_ADDRESS");
+        address fallbackHandler = vm.envAddress("SAFE_FALLBACK_HANDLER_ADDRESS");
 
         consumerImpl = address(new Consumer());
         consumer = address(new ERC1967Proxy(

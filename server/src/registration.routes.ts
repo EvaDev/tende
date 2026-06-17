@@ -123,7 +123,7 @@ router.post('/recover', async (req: Request, res: Response): Promise<void> => {
       'function recoverWallet(address oldWallet, bytes32 ensHash, address newOwner) returns (address newWallet)',
       'event WalletRecovered(address indexed oldWallet, address indexed newWallet, uint256 indexed globalConsumerId)',
     ];
-    const admin    = new ethers.Wallet(config.admin.privateKey, new ethers.JsonRpcProvider(config.chain.rpcUrl));
+    const admin    = new ethers.Wallet(config.backend.privateKey, new ethers.JsonRpcProvider(config.chain.rpcUrl));
     const contract = new ethers.Contract(config.contracts.consumer, CONSUMER_RECOVER_ABI, admin);
     const tx       = await contract.recoverWallet(oldWalletAddress, ensHash, newSignerAddress);
     const receipt  = await tx.wait() as ethers.TransactionReceipt;
