@@ -77,8 +77,12 @@ router.get('/balance', async (req: Request, res: Response): Promise<void> => {
       contract_address: string | null;
       decimals: number;
       currency_symbol: string | null;
+      base_currency: string | null;
+      is_treasury: boolean;
     }>(
-      `SELECT s.internal_code, s.contract_address, cu.decimals, cu.currency_symbol
+      `SELECT s.internal_code, s.contract_address, cu.decimals, cu.currency_symbol,
+              COALESCE(cu.base_currency_code, cu.currency_code) AS base_currency,
+              s.is_treasury_token AS is_treasury
        FROM stablecoins s
        JOIN currencies cu ON cu.currency_code = s.internal_code
        WHERE s.is_active = TRUE AND s.is_deployed = TRUE`,
@@ -98,17 +102,21 @@ router.get('/balance', async (req: Request, res: Response): Promise<void> => {
               token:           coin.internal_code,
               symbol:          coin.currency_symbol,
               decimals:        coin.decimals,
+              baseCurrency:    coin.base_currency,
+              isTreasury:      coin.is_treasury,
               raw:             raw.toString(),
               formatted,
               contractAddress: coin.contract_address,
             };
           } catch {
             return {
-              token:     coin.internal_code,
-              symbol:    coin.currency_symbol,
-              raw:       '0',
-              formatted: '0',
-              error:     'balance_read_failed',
+              token:        coin.internal_code,
+              symbol:       coin.currency_symbol,
+              baseCurrency: coin.base_currency,
+              isTreasury:   coin.is_treasury,
+              raw:          '0',
+              formatted:    '0',
+              error:        'balance_read_failed',
             };
           }
         }),
@@ -168,5 +176,12 @@ router.get('/kyc', async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: (err as Error).message });
   }
 });
+
+// ── Investments (non-custodial) ───────────────────────────────────────────────
+// The broker ledger (platform-held positions, buy/sell endpoints) was removed:
+// under the non-custodial DEX model the asset lives in the consumer's own Safe
+// wallet. Holdings are therefore the on-chain token balance (read via /balance),
+// and a "buy" is a Pimlico-sponsored Uniswap swap UserOp from the Safe — added
+// in step 2 (execution). Live pricing is served by the public /api/assets route.
 
 export default router;

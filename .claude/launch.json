@@ -1,0 +1,21 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "consumer",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "/Users/seanevans/eth/consumer",
+      "port": 5173,
+      "autoPort": true
+    },
+    {
+      "name": "admin",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "/Users/seanevans/eth/admin",
+      "port": 5174,
+      "autoPort": true
+    }
+  ]
+}

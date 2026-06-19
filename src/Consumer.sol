@@ -51,6 +51,10 @@ contract Consumer is
     ReentrancyGuardTransient,
     IConsumer
 {
+    /// @notice Implementation version. Bump on every upgrade. Stored in bytecode
+    ///         (constant), so it reflects the currently-deployed logic, not the proxy.
+    string public constant VERSION = "1.0.0";
+
     // ── Roles ─────────────────────────────────────────────────────────────────
 
     bytes32 public constant REGISTRAR_ROLE   = keccak256("REGISTRAR_ROLE");

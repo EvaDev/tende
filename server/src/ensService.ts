@@ -29,7 +29,8 @@ const PUBLIC_RESOLVER_ABI = [
 const ENS_REGISTRY_ADDRESS = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e';
 
 function getEnsProvider(): ethers.JsonRpcProvider {
-  return new ethers.JsonRpcProvider(config.chain.rpcUrl);
+  // ENS registry lives on mainnet regardless of which chain the Safe wallets are on
+  return new ethers.JsonRpcProvider(config.chain.mainnetRpcUrl);
 }
 
 function getEnsSigner(): ethers.Wallet {

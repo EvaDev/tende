@@ -1,0 +1,34 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Defaults — overwritten at boot by applyBrandColors() from /api/config */
+  --color-bg:     168 200 232;  /* #A8C8E8 pale blue  */
+  --color-accent:  92  45  30;  /* #5C2D1E dark brown */
+  --color-text:   255 255 255;  /* #FFFFFF white       */
+}
+
+* { -webkit-tap-highlight-color: transparent; }
+
+body {
+  background-color: rgb(var(--color-bg));
+  color: rgb(var(--color-accent));
+  font-family: 'Inter', system-ui, sans-serif;
+  min-height: 100dvh;
+}
+
+#root {
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+
+::-webkit-scrollbar       { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgb(var(--color-accent) / 0.3); border-radius: 3px; }

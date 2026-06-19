@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Default brand colors — overridden at runtime from app_config */
+  --color-bg:     168 200 232;   /* #A8C8E8 pale blue */
+  --color-accent: 92  45  30;    /* #5C2D1E dark brown */
+  --color-text:   255 255 255;   /* #FFFFFF white */
+}
+
+body {
+  background-color: rgb(var(--color-bg));
+  color: #1a1a1a;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgb(var(--color-accent) / 0.3); border-radius: 3px; }

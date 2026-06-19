@@ -43,6 +43,7 @@ export const config = {
       if (override) return override;
       throw new Error(`No RPC URL configured for CHAIN_ID=${id}. Set RPC_URL_MAINNET, RPC_URL_SEPOLIA, or RPC_URL.`);
     },
+    get mainnetRpcUrl(): string { return required('RPC_URL_MAINNET'); },
     chainId: parseInt(required('CHAIN_ID')),
   },
 
@@ -57,11 +58,25 @@ export const config = {
     proxyFactory:          required('SAFE_PROXY_FACTORY_ADDRESS'),
     fallbackHandler:       optional('SAFE_FALLBACK_HANDLER_ADDRESS'),
     webAuthnSignerFactory: required('SAFE_WEBAUTHN_SIGNER_FACTORY_ADDRESS'),
+    // P-256 verifier (FCLP256Verifier) used by the WebAuthn signer factory.
+    // `verifiers` is a uint176 = (precompile<<160)|fallbackVerifier. Sepolia has
+    // no RIP-7212 precompile, so precompile=0 and verifiers = BigInt(verifier addr).
+    p256Verifier:          optional('SAFE_P256_VERIFIER_ADDRESS', '0x445a0683e494ea0c5AF3E83c5159fBE47Cf9e765'),
+    get webAuthnVerifiers(): bigint { return BigInt(this.p256Verifier as string); },
+  },
+
+  // WebAuthn relying party — must match the consumer app's origin/host.
+  webauthn: {
+    rpId:   optional('WEBAUTHN_RP_ID', 'localhost'),
+    rpName: optional('WEBAUTHN_RP_NAME', 'iMali'),
+    origin: optional('WEBAUTHN_ORIGIN', 'http://localhost:5173'),
   },
 
   pimlico: {
-    apiKey:     required('PIMLICO_API_KEY'),
-    bundlerUrl: required('PIMLICO_BUNDLER_URL'),
+    apiKey:             required('PIMLICO_API_KEY'),
+    bundlerUrl:         required('PIMLICO_BUNDLER_URL'),
+    sponsorshipPolicy:  required('PIMLICO_SPONSORSHIP_POLICY_ID'),
+    webhookSecret:      required('PIMLICO_WEBHOOK_SECRET'),
   },
 
   ens: {
@@ -91,6 +106,26 @@ export const config = {
 
   vault: {
     mode: optional('VAULT_MODE', 'poc'),
+  },
+
+  fx: {
+    // Live FX provider. When no key is set the service falls back to admin-set
+    // overrides in fx_rate_overrides. ZimRate covers exotic ZWG pairs;
+    // open.er-api covers majors. Rates are cached in-memory for cacheTtlMs.
+    provider:     optional('FX_PROVIDER', 'zimrate'),
+    apiKey:       optional('FX_PROVIDER_API_KEY'),
+    zimrateUrl:   optional('FX_ZIMRATE_URL', 'https://zimrate.statotec.com/api/v1/rates'),
+    majorsUrl:    optional('FX_MAJORS_URL', 'https://open.er-api.com/v6/latest'),
+    cacheTtlMs:   parseInt(optional('FX_CACHE_TTL_MS', '300000')), // 5 min
+  },
+
+  dex: {
+    // Uniswap V3 QuoterV2 + USDC on mainnet (where the listed assets have liquidity).
+    // Used read-only (eth_call) to price assets — no on-chain oracle, no transaction.
+    quoterV2:     optional('DEX_QUOTER_V2', '0x61fFE014bA17989E743c5F6cB21bF9697530B21e'),
+    usdcAddress:  optional('DEX_USDC_ADDRESS', '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
+    usdcDecimals: 6,
+    cacheTtlMs:   parseInt(optional('DEX_QUOTE_TTL_MS', '60000')), // 1 min
   },
 
   arweave: {

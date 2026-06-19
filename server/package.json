@@ -5,6 +5,7 @@
   "description": "1Remit backend API server",
   "main": "dist/index.js",
   "scripts": {
+    "predev": "lsof -ti:${PORT:-3001} | xargs -I {} kill -9 {} 2>/dev/null || true",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",

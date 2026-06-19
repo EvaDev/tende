@@ -27,6 +27,9 @@ contract Vault is
 {
     using SafeERC20 for IERC20;
 
+    /// @notice Implementation version. Bump on every upgrade (constant, in bytecode).
+    string public constant VERSION = "1.0.0";
+
     // ── Roles ─────────────────────────────────────────────────────────────────
 
     bytes32 public constant ADMIN_EXECUTOR_ROLE = keccak256("ADMIN_EXECUTOR_ROLE");

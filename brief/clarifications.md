@@ -15,7 +15,10 @@ These are complete but just need review.
 
 
 On the $ savings yield: "Some yield can be shared with the..." — this sentence is cut off in the overview. Shared with whom — the consumer, Flash, merchants? This affects the vault contract design.
-The vault could be made up of some yield bearing USD stables like USDN or USDE, but also non yield bearing ones like USDT. In aggregate we want to take the total yield and share it in some ratio with users. 
+The vault could be made up of some yield bearing USD stables like USDN or USDE, but also non yield bearing ones like USDT. In aggregate we want to take the total yield and share it in some ratio with users. So we need the ability to manage this and publish a current $savings yield % to the consumer. 
 
 On merchant settlement: Is the expectation that merchants are always settled in TTZA first and then off-ramp themselves, or does the settlement router need to handle direct FIAT payout (e.g. via bank transfer) as part of the on-chain flow?
 Merchants will always be settled in TTZA first (or the treasury token of the country / currency they operat in. ) Then at some interval we will settle FIAT into the mercht bank account if they elect for Fiat settlement. Alternately if the elect for USD on chain settlement (mostly applicable we think to non ZA merchants) then we can convert our TTZA to USD. We are not sure about the best way to go about this - CEX or DEX. CEX takes approx 2% so we prefer DEX - and the flow would be transfer Cash to our partner like OVEX and they send us ZARP, from there we purchase USDC on a DEX like Aerodrome or Uniswap. Fewer exchange hops is obviously better but we also want to keep to total costs to a minimum.  
+
+Transactions and transaction history :
+At this stage in the design it probably makes sense to add in any data components that would be required to make transactions ISO20022 compliant, since compliance will be one of our greatest reporting requirements

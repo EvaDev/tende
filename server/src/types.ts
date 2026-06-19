@@ -9,7 +9,7 @@ export interface ConsumerJwtPayload {
   consumerId: string;
   countryCode: string;
   kycLevel: number | null;
-  role: 'consumer' | 'admin';
+  role: 'consumer' | 'admin' | 'merchant';
   iat?: number;
   exp?: number;
 }

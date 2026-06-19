@@ -20,6 +20,9 @@ contract TreasuryToken is
     ReentrancyGuardTransient,
     UUPSUpgradeable
 {
+    /// @notice Implementation version. Bump on every upgrade (constant, in bytecode).
+    string public constant VERSION = "1.0.0";
+
     // ── Roles ─────────────────────────────────────────────────────────────────
 
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");

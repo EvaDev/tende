@@ -39,7 +39,7 @@ const live: PimlicoService = {
         jsonrpc: '2.0',
         id:      1,
         method:  'pm_addToSponsorshipPolicy',
-        params:  [{ senderAddress: walletAddress }],
+        params:  [config.pimlico.sponsorshipPolicy, { senderAddress: walletAddress }],
       }),
     });
 
@@ -65,7 +65,7 @@ const live: PimlicoService = {
         jsonrpc: '2.0',
         id:      1,
         method:  'pm_getSponsorshipPolicySenders',
-        params:  [],
+        params:  [config.pimlico.sponsorshipPolicy],
       }),
     });
 

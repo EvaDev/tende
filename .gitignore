@@ -6,6 +6,15 @@ broadcast/
 # Node
 node_modules/
 
+# Build output
+dist/
+
+# Claude Code local (per-machine) settings
+.claude/settings.local.json
+
+# Archives (reference junk)
+*.zip
+
 # Secrets — never commit
 .env
 secrets/

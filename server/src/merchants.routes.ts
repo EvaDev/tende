@@ -13,10 +13,63 @@
 //   PATCH /api/merchants/:id/offramp/:configId  — update off-ramp config
 
 import express, { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import db      from './db.js';
+import config from './config.js';
 import { requireAdmin }  from './admin.middleware.js';
+import { verifyAndConsume } from './authNonce.js';
 
 const router = express.Router();
+
+// ── POST /api/merchants/register ──────────────────────────────────────────────
+// Self-service merchant onboarding. A new wallet proves ownership via a signed
+// nonce (GET /api/auth/nonce first), submits KYB details (not verified yet), and
+// receives a merchant JWT. Country defaults from the client; the wallet is the
+// connected wallet. verification_status stays PENDING.
+router.post('/register', async (req: Request, res: Response): Promise<void> => {
+  const { walletAddress, signature, name, email, address, contactPerson, settlementType, countryCode } =
+    req.body as Record<string, string>;
+
+  if (!walletAddress || !signature) { res.status(400).json({ error: 'walletAddress and signature required' }); return; }
+  if (!name || !countryCode || !settlementType) { res.status(400).json({ error: 'name, countryCode and settlementType required' }); return; }
+  if (!['FIAT', 'ONCHAIN'].includes(settlementType)) { res.status(400).json({ error: 'settlementType must be FIAT or ONCHAIN' }); return; }
+
+  const wallet = walletAddress.toLowerCase();
+  if (!verifyAndConsume(wallet, signature)) {
+    res.status(401).json({ error: 'Signature verification failed or nonce expired. Request a new nonce.' });
+    return;
+  }
+
+  try {
+    const existing = await db.query(`SELECT merchant_id FROM merchants WHERE LOWER(wallet_address) = $1`, [wallet]);
+    if (existing.rows.length) { res.status(409).json({ error: 'This wallet is already registered as a merchant.' }); return; }
+
+    const cc = await db.query<{ currency_code: string }>(
+      `SELECT currency_code FROM countries WHERE country_code = $1`, [countryCode.toUpperCase()]);
+    if (!cc.rows.length) { res.status(400).json({ error: 'Unknown country' }); return; }
+    const currency           = cc.rows[0].currency_code;
+    const settlementCurrency = settlementType === 'ONCHAIN' ? 'USDC' : currency;
+
+    const r = await db.query<{ merchant_id: string; name: string; country_code: string; verification_status: string }>(
+      `INSERT INTO merchants
+         (name, country_code, currency_code, wallet_address, email, address, contact_person, settlement_type, settlement_currency, verification_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING')
+       RETURNING merchant_id, name, country_code, verification_status`,
+      [name, countryCode.toUpperCase(), currency, wallet, email ?? null, address ?? null, contactPerson ?? null, settlementType, settlementCurrency],
+    );
+    const merchant = r.rows[0];
+
+    const token = jwt.sign(
+      { sub: wallet, consumerId: merchant.merchant_id, countryCode: countryCode.toUpperCase(), kycLevel: 0, role: 'merchant' },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn as jwt.SignOptions['expiresIn'] },
+    );
+    res.status(201).json({ token, role: 'merchant', merchant });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === '23505') { res.status(409).json({ error: 'Wallet already registered' }); return; }
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
 
 // ── GET /api/merchants ────────────────────────────────────────────────────────
 

@@ -5,11 +5,13 @@
 
 import express, { Request, Response } from 'express';
 import { ethers } from 'ethers';
+import jwt from 'jsonwebtoken';
 import config                  from './config.js';
 import { registerNewConsumer } from './registrationService.js';
 import ensService              from './ensService.js';
 import idosService             from './idosService.js';
 import db                      from './db.js';
+import { verifyRegistrationClientData, extractP256FromSpki, b64urlToBuf } from './webauthnService.js';
 
 const router = express.Router();
 
@@ -18,23 +20,27 @@ const router = express.Router();
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
     const {
-      pubKeyX, pubKeyY, verifiers,
+      credentialId, publicKeyDer, clientDataJSON,
       displayName, mobileNumber, countryCode, ensSubdomain,
       userEncryptionPublicKey, ownershipProofMessage, ownershipProofSignature,
       delegatedWriteGrant, dwgSignature,
     } = req.body as Record<string, string>;
 
-    const required = ['pubKeyX', 'pubKeyY', 'verifiers', 'displayName', 'mobileNumber', 'countryCode', 'ensSubdomain'];
+    const required = ['credentialId', 'publicKeyDer', 'clientDataJSON', 'displayName', 'mobileNumber', 'countryCode', 'ensSubdomain'];
     const missing  = required.filter(k => !req.body[k]);
     if (missing.length) {
       res.status(400).json({ error: 'Missing required fields', missing });
       return;
     }
 
+    // 1. Validate the passkey creation ceremony (challenge + origin), then derive
+    //    the P-256 coordinates from the credential's DER public key.
+    verifyRegistrationClientData(clientDataJSON);
+    const { x: pubKeyX, y: pubKeyY } = extractP256FromSpki(b64urlToBuf(publicKeyDer));
+    const verifiers = config.safe.webAuthnVerifiers;
+
     const result = await registerNewConsumer({
-      pubKeyX:   BigInt(pubKeyX),
-      pubKeyY:   BigInt(pubKeyY),
-      verifiers: BigInt(verifiers),
+      pubKeyX, pubKeyY, verifiers,
       displayName, mobileNumber, countryCode, ensSubdomain,
       userEncryptionPublicKey, ownershipProofMessage, ownershipProofSignature,
       delegatedWriteGrant: typeof delegatedWriteGrant === 'string'
@@ -43,7 +49,42 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       dwgSignature,
     });
 
-    res.status(201).json(result);
+    // 2. Persist the passkey credential so the user can log in on return.
+    if (result.walletAddress) {
+      await db.query(
+        `INSERT INTO webauthn_credentials
+           (credential_id, wallet_address, pub_key_x, pub_key_y, signer_address, rp_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (credential_id) DO UPDATE SET
+           wallet_address = EXCLUDED.wallet_address,
+           pub_key_x      = EXCLUDED.pub_key_x,
+           pub_key_y      = EXCLUDED.pub_key_y,
+           signer_address = EXCLUDED.signer_address`,
+        [
+          credentialId,
+          result.walletAddress.toLowerCase(),
+          pubKeyX.toString(),
+          pubKeyY.toString(),
+          (result.steps?.signerAddress as string) ?? null,
+          config.webauthn.rpId,
+        ],
+      );
+    }
+
+    // 3. Issue a JWT so the consumer is immediately logged in after registration.
+    const token = jwt.sign(
+      {
+        sub:         result.walletAddress,
+        consumerId:  result.consumerId,
+        countryCode: countryCode ?? 'ZA',
+        kycLevel:    0,
+        role:        'consumer',
+      },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn as import('jsonwebtoken').SignOptions['expiresIn'] },
+    );
+
+    res.status(201).json({ ...result, token });
   } catch (err) {
     console.error('[POST /api/register]', err);
     const msg = (err as Error).message ?? '';
