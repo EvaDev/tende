@@ -8,7 +8,10 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, './src') },
   },
   server: {
-    port: process.env.PORT ? parseInt(process.env.PORT) : undefined,
+    // Fixed port so the admin console is always at :5174 (consumer owns :5173).
+    // strictPort → fail loudly if it's occupied instead of silently drifting.
+    port: process.env.PORT ? parseInt(process.env.PORT) : 5174,
+    strictPort: true,
     proxy: {
       '/api': 'http://localhost:3001',
       '/idos': 'http://localhost:3001',

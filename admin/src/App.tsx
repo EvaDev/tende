@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from '@/components/Layout';
+import { AdminRoute } from '@/components/AdminRoute';
 import Dashboard from '@/pages/Dashboard';
 import Merchants from '@/pages/Merchants';
 import Products from '@/pages/Products';
@@ -14,6 +15,17 @@ import Registration from '@/pages/Registration';
 import Contracts from '@/pages/Contracts';
 import Assets from '@/pages/Assets';
 import About from '@/pages/About';
+import DocsLayout from '@/pages/docs/DocsLayout';
+import DocsConcepts from '@/pages/docs/Concepts';
+import DocsGasFees from '@/pages/docs/GasFees';
+import DocsContracts from '@/pages/docs/Contracts';
+import DocsFunctions from '@/pages/docs/Functions';
+import DocsEvents from '@/pages/docs/Events';
+import ReportsLayout from '@/pages/reports/ReportsLayout';
+import ReportsSummary from '@/pages/reports/Summary';
+import ReportsEvents from '@/pages/reports/Events';
+import ReportsTransfers from '@/pages/reports/Transfers';
+import ReportsRevenue from '@/pages/reports/Revenue';
 
 export default function App() {
   return (
@@ -25,14 +37,29 @@ export default function App() {
         <Route path="consumers"    element={<Consumers />} />
         <Route path="countries"    element={<Countries />} />
         <Route path="currencies"   element={<Currencies />} />
-        <Route path="treasury"     element={<Treasury />} />
-        <Route path="paymaster"    element={<Paymaster />} />
-        <Route path="registration" element={<Registration />} />
+        <Route path="treasury"     element={<AdminRoute><Treasury /></AdminRoute>} />
+        <Route path="paymaster"    element={<AdminRoute><Paymaster /></AdminRoute>} />
+        <Route path="registration" element={<AdminRoute><Registration /></AdminRoute>} />
         <Route path="settings"     element={<SettingsPage />} />
         <Route path="logs"         element={<Logs />} />
         <Route path="contracts"    element={<Contracts />} />
         <Route path="assets"       element={<Assets />} />
         <Route path="about"        element={<About />} />
+        <Route path="docs" element={<DocsLayout />}>
+          <Route index element={<Navigate to="concepts" replace />} />
+          <Route path="concepts"  element={<DocsConcepts />} />
+          <Route path="gas-fees"  element={<DocsGasFees />} />
+          <Route path="contracts" element={<DocsContracts />} />
+          <Route path="functions" element={<DocsFunctions />} />
+          <Route path="events"    element={<DocsEvents />} />
+        </Route>
+        <Route path="reports" element={<ReportsLayout />}>
+          <Route index element={<Navigate to="summary" replace />} />
+          <Route path="summary"   element={<ReportsSummary />} />
+          <Route path="events"    element={<ReportsEvents />} />
+          <Route path="transfers" element={<ReportsTransfers />} />
+          <Route path="revenue"   element={<ReportsRevenue />} />
+        </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

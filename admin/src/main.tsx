@@ -8,8 +8,13 @@ import '@rainbow-me/rainbowkit/styles.css';
 
 import { wagmiConfig } from '@/lib/wagmi';
 import { restoreToken } from '@/lib/auth';
+import { installClientErrorReporter } from '@/lib/clientLog';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import App from './App';
 import './index.css';
+
+// Forward uncaught client errors to the backend Logs feed (tagged source=admin)
+installClientErrorReporter('admin');
 
 // Restore JWT from localStorage so write actions work after a page refresh
 restoreToken();
@@ -18,14 +23,16 @@ const queryClient = new QueryClient();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <WagmiProvider config={wagmiConfig}>
-      <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider theme={darkTheme({ accentColor: '#5C2D1E' })}>
-          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-            <App />
-          </BrowserRouter>
-        </RainbowKitProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <ErrorBoundary>
+      <WagmiProvider config={wagmiConfig}>
+        <QueryClientProvider client={queryClient}>
+          <RainbowKitProvider theme={darkTheme({ accentColor: '#5C2D1E' })}>
+            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <App />
+            </BrowserRouter>
+          </RainbowKitProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
+    </ErrorBoundary>
   </React.StrictMode>,
 );

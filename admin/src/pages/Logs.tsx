@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 
-interface LogEntry { ts: string; level: string; msg: string }
+interface LogEntry { ts: string; level: string; source?: string; msg: string }
 
 const LEVEL_COLOR: Record<string, string> = {
   info:  'text-gray-300',
   warn:  'text-yellow-400',
   error: 'text-red-400',
+};
+
+// Source chip colours. 'server' is the backend; admin/consumer arrive via
+// POST /api/client-log (client error reporting).
+const SOURCE_COLOR: Record<string, string> = {
+  server:   'bg-emerald-500/15 text-emerald-300',
+  admin:    'bg-cyan-500/15 text-cyan-300',
+  consumer: 'bg-fuchsia-500/15 text-fuchsia-300',
+  client:   'bg-gray-500/20 text-gray-300',
 };
 
 export default function Logs() {
@@ -29,13 +38,16 @@ export default function Logs() {
   }, [paused]);
 
   const visible = filter
-    ? entries.filter(e => e.msg.toLowerCase().includes(filter.toLowerCase()) || e.level.includes(filter))
+    ? entries.filter(e => {
+        const q = filter.toLowerCase();
+        return e.msg.toLowerCase().includes(q) || e.level.includes(q) || (e.source ?? '').includes(q);
+      })
     : entries;
 
   return (
     <div className="space-y-3 h-full flex flex-col">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-brand-accent">Server Logs</h2>
+        <h2 className="text-xl font-semibold text-brand-accent">Logs</h2>
         <div className="flex items-center gap-3">
           <input
             type="text"
@@ -69,6 +81,9 @@ export default function Logs() {
         {visible.map((e, i) => (
           <div key={i} className="flex gap-3 hover:bg-white/5 px-1 rounded">
             <span className="text-gray-600 flex-shrink-0">{e.ts.slice(11, 23)}</span>
+            <span className={cn('flex-shrink-0 px-1.5 rounded text-[10px] leading-5 uppercase', SOURCE_COLOR[e.source ?? 'server'] ?? SOURCE_COLOR.client)}>
+              {e.source ?? 'server'}
+            </span>
             <span className={cn('flex-shrink-0 w-10', LEVEL_COLOR[e.level] ?? 'text-gray-400')}>{e.level}</span>
             <span className="text-gray-200 break-all">{e.msg}</span>
           </div>

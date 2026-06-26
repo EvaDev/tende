@@ -99,11 +99,21 @@ contract Deploy is Script {
                 fallbackHandler
             ))
         ));
+
+        // Make new consumer Safes ERC-4337 accounts (Safe4337Module enabled at
+        // setup). Defaults to the canonical Safe v0.3.0 modules (EntryPoint v0.7);
+        // override via env, or pass address(0) to keep the plain 1.4.1 setup.
+        address module4337  = vm.envOr("SAFE_4337_MODULE_ADDRESS", address(0x75cf11467937ce3F2f357CE24ffc3DBF8fD5c226));
+        address moduleSetup = vm.envOr("SAFE_MODULE_SETUP_ADDRESS", address(0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47));
+        if (module4337 != address(0) && moduleSetup != address(0)) {
+            Consumer(consumer).setSafe4337Config(module4337, moduleSetup);
+        }
     }
 
     // ── Post-deploy wiring ────────────────────────────────────────────────────
 
     function _wireContracts() internal {
+        address admin   = vm.envAddress("DEPLOYER_ADMIN_ADDRESS");
         address backend = vm.envAddress("BACKEND_SIGNER_ADDRESS");
         address usdc    = vm.envAddress("USDC_ADDRESS");
         address zarP    = vm.envAddress("ZARP_TOKEN_ADDRESS");
@@ -126,6 +136,11 @@ contract Deploy is Script {
         // Wire Consumer for KYC / country-match checks
         v.setConsumerContract(consumer);
 
+        // Platform treasury is a trusted Vault counterparty (can send/receive USDC
+        // and unified balances without being a registered consumer). Merchants are
+        // added by the backend at onboarding. Deployer holds ADMIN_EXECUTOR_ROLE.
+        v.setTrustedCounterparty(admin, true);
+
         // TreasuryTokens per currency
         v.setCurrencyTreasuryToken(keccak256("ZAR"), ttza);
         v.setCurrencyTreasuryToken(keccak256("ZWL"), ttzw);
@@ -138,6 +153,29 @@ contract Deploy is Script {
         // Backend needs MINTER_ROLE to mint on fiat deposit confirmation
         za.grantRole(minterRole, backend);
         zw.grantRole(minterRole, backend);
+
+        // ── TreasuryToken compliance gate (v1.1.0) ────────────────────────────
+        // COMPLIANCE_ROLE = compliance operator: freeze / forcedTransfer (clawback,
+        // lost-passkey recovery) AND merchant-whitelist management at onboarding.
+        // Granted to backend for automated ops; consider moving to a Safe later.
+        // (Not to be confused with a "cash-out agent", which is a merchant type.)
+        bytes32 complianceRole = za.COMPLIANCE_ROLE();
+        za.grantRole(complianceRole, backend);
+        zw.grantRole(complianceRole, backend);
+
+        // Point each TT at the Consumer registry and turn the gate ON so transfers
+        // are restricted to: registered consumers (same-country, no KYC needed) and
+        // whitelisted trusted addresses (platform treasury + merchants).
+        za.setConsumerContract(consumer);
+        zw.setConsumerContract(consumer);
+        za.setComplianceEnabled(true);
+        zw.setComplianceEnabled(true);
+
+        // Whitelist the platform treasury (holds INITIAL_SUPPLY and settles merchant
+        // payouts) as a trusted, country-agnostic settlement address on both tokens.
+        // Merchant wallets are whitelisted by the backend (COMPLIANCE_ROLE) at onboarding.
+        za.addToWhitelist(admin);
+        zw.addToWhitelist(admin);
 
         // Consumer roles for backend
         c.grantRole(c.REGISTRAR_ROLE(),   backend);
@@ -182,5 +220,8 @@ contract Deploy is Script {
         console2.log("  1. Whitelist Consumer proxy in Pimlico paymaster (pm_sponsorUserOperation)");
         console2.log("  2. Set CONSUMER_ADDRESS in backend config");
         console2.log("  3. Fund backend wallet with ETH for gas");
+        console2.log("  4. Compliance gate is ON: TT transfers limited to consumers +");
+        console2.log("     whitelisted platform/merchants; Vault transfers require both KYC'd");
+        console2.log("  5. Whitelist each merchant wallet on TTZA/TTZW at onboarding (COMPLIANCE_ROLE)");
     }
 }

@@ -24,6 +24,13 @@ interface ISafe {
     ) external;
 }
 
+/// @dev SafeModuleSetup helper — delegatecalled by the Safe during setup() to
+///      enable modules. Used to make a freshly-deployed Safe a 4337 account by
+///      enabling the Safe4337Module before any owner transaction.
+interface ISafeModuleSetup {
+    function enableModules(address[] calldata modules) external;
+}
+
 /// @title Consumer
 /// @notice Account factory and identity registry for iMali.
 ///         Deploys one Safe v1.4.1 smart wallet per consumer.
@@ -53,7 +60,8 @@ contract Consumer is
 {
     /// @notice Implementation version. Bump on every upgrade. Stored in bytecode
     ///         (constant), so it reflects the currently-deployed logic, not the proxy.
-    string public constant VERSION = "1.0.0";
+    /// 1.1.0 — optional ERC-4337 (Safe4337Module) wallet setup; plain 1.4.1 when unset.
+    string public constant VERSION = "1.1.0";
 
     // ── Roles ─────────────────────────────────────────────────────────────────
 
@@ -104,6 +112,21 @@ contract Consumer is
     /// CompatibilityFallbackHandler — adds ERC-1271 to Safe; pass address(0) to skip
     address public safeFallbackHandler;
 
+    // ── ERC-4337 wallet config (v1.1.0, APPEND-ONLY) ───────────────────────────
+    // When both are set, newly-deployed Safes are made 4337-capable: setup()
+    // delegatecalls SafeModuleSetup.enableModules([safe4337Module]) and routes the
+    // fallback handler to the module, so the EntryPoint can validate user-ops.
+    // When either is address(0), deployment falls back to the plain 1.4.1 setup
+    // (CompatibilityFallbackHandler) — behaviour-preserving for the upgrade.
+    // Either way the Safe owner is still the passkey signer; the gasless
+    // execTransaction relay (Option A) is unaffected, as it validates against the
+    // owner's ERC-1271, not the Safe's fallback handler.
+
+    /// Safe4337Module address (also used as the fallback handler). address(0) = off.
+    address public safe4337Module;
+    /// SafeModuleSetup helper (delegatecall target in setup() that enables modules).
+    address public safeModuleSetup;
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     event ConsumerRegistered(
@@ -133,6 +156,7 @@ contract Consumer is
         uint256         logIndex
     );
     event MaxConsumersUpdated(uint256 newMax);
+    event Safe4337ConfigSet(address indexed module, address indexed moduleSetup);
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
@@ -177,6 +201,20 @@ contract Consumer is
     function setMaxConsumers(uint256 newMax) external onlyRole(DEFAULT_ADMIN_ROLE) {
         maxConsumers = newMax;
         emit MaxConsumersUpdated(newMax);
+    }
+
+    /// @notice Configure (or disable) ERC-4337 wallet deployment. When both are
+    ///         non-zero, new Safes enable the Safe4337Module at setup; pass
+    ///         (address(0), address(0)) to revert to plain 1.4.1 deployment.
+    ///         Only affects Safes deployed AFTER this call — existing Safes are
+    ///         untouched. Set post-upgrade (initialize does not run again).
+    function setSafe4337Config(address module, address moduleSetup)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        safe4337Module  = module;
+        safeModuleSetup = moduleSetup;
+        emit Safe4337ConfigSet(module, moduleSetup);
     }
 
     // ── Consumer registration ─────────────────────────────────────────────────
@@ -468,13 +506,29 @@ contract Consumer is
         address[] memory owners = new address[](1);
         owners[0] = owner;
 
+        // 4337-capable when configured: delegatecall SafeModuleSetup.enableModules
+        // in setup() and route the fallback handler to the module. Otherwise plain
+        // 1.4.1 (CompatibilityFallbackHandler). See the storage block above.
+        address to;
+        bytes   memory setupData;
+        address fallbackHandler;
+        if (safe4337Module != address(0) && safeModuleSetup != address(0)) {
+            address[] memory modules = new address[](1);
+            modules[0] = safe4337Module;
+            to              = safeModuleSetup;
+            setupData       = abi.encodeWithSelector(ISafeModuleSetup.enableModules.selector, modules);
+            fallbackHandler = safe4337Module;
+        } else {
+            fallbackHandler = safeFallbackHandler;
+        }
+
         bytes memory initializer = abi.encodeWithSelector(
             ISafe.setup.selector,
             owners,
             uint256(1),
-            address(0),
-            bytes(""),
-            safeFallbackHandler,
+            to,
+            setupData,
+            fallbackHandler,
             address(0),
             uint256(0),
             address(0)

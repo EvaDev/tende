@@ -15,7 +15,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (_token) headers['Authorization'] = `Bearer ${_token}`;
 
   const res = await fetch(path, { ...init, headers });
-  if (res.status === 401) throw new AuthError();
+  if (res.status === 401) {
+    // Token expired/invalid — purge it and ask the role hook to re-login, so a
+    // stale token can't wedge the UI in a permanent "session expired" state.
+    _token = null;
+    try { localStorage.removeItem('auth_token'); } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('role-refresh')); } catch { /* ignore */ }
+    throw new AuthError();
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);

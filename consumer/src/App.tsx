@@ -5,6 +5,7 @@ import Register from '@/pages/Register';
 import Home     from '@/pages/Home';
 import TopUp    from '@/pages/TopUp';
 import Send     from '@/pages/Send';
+import Pay      from '@/pages/Pay';
 import History  from '@/pages/History';
 import Account  from '@/pages/Account';
 import BottomNav from '@/components/BottomNav';
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/home"     element={<Protected><HomeLayout /></Protected>} />
         <Route path="/top-up"   element={<Protected><TopUp /></Protected>} />
         <Route path="/send"     element={<Protected><Send /></Protected>} />
+        <Route path="/pay"      element={<Protected><Pay /></Protected>} />
         <Route path="/history"  element={<Protected><History /></Protected>} />
         <Route path="/account"  element={<Protected><Account /></Protected>} />
         <Route path="*"         element={<Navigate to="/" replace />} />

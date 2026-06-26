@@ -5,7 +5,7 @@ import { http } from 'wagmi';
 const alchemyKey = import.meta.env.VITE_ALCHEMY_API_KEY ?? '';
 
 export const wagmiConfig = getDefaultConfig({
-  appName:   'Tende Admin',
+  appName:   'iMali Admin',
   projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? 'demo',
   chains:    [sepolia, mainnet],
   transports: {

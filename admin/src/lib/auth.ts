@@ -13,9 +13,33 @@ export async function loginWithWallet(
   return result;
 }
 
-export function restoreToken() {
+// Decode a JWT's `exp` (seconds) without verifying the signature. base64url-safe.
+function tokenExp(token: string): number | null {
+  try {
+    const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(b64)) as { exp?: number };
+    return typeof payload.exp === 'number' ? payload.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+// An absent/unparseable exp is treated as expired — safer to re-login than to
+// attach a token the backend will reject.
+function isExpired(token: string): boolean {
+  const exp = tokenExp(token);
+  return exp == null || exp * 1000 <= Date.now();
+}
+
+// Restore a *valid* JWT from localStorage. An expired token is purged and null is
+// returned, so useRole's `!restoreToken()` check re-triggers the sign-in flow
+// instead of silently attaching a dead token (which caused the stuck
+// "session expired" loop where reconnecting never recovered).
+export function restoreToken(): string | null {
   const t = localStorage.getItem('auth_token');
-  if (t) setAuthToken(t);
+  if (!t) return null;
+  if (isExpired(t)) { logout(); return null; }
+  setAuthToken(t);
   return t;
 }
 

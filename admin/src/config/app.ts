@@ -3,7 +3,7 @@
 // via GET /api/config/all. If that call fails, the UI shows an error rather
 // than silently using a stale or wrong colour.
 export const APP_DEFAULTS = {
-  name: 'Tende',
+  name: 'iMali',
 } as const;
 
 export function hexToRgb(hex: string): string {

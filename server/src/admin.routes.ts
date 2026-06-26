@@ -1,4 +1,4 @@
-// Admin-facing routes for the Tende admin console.
+// Admin-facing routes for the iMali admin console.
 // Aliases existing routes and adds admin-only aggregation endpoints.
 
 import express, { Request, Response } from 'express';
@@ -7,8 +7,40 @@ import db from './db.js';
 import config from './config.js';
 import { requireAdmin } from './admin.middleware.js';
 import dexQuoteService from './dexQuoteService.js';
+import { getHarvestableYield, harvestYield, mintTreasuryZA, vaultAdminCredit } from './treasuryService.js';
 
 const router = express.Router();
+
+// ── Vault yield harvesting (admin-only) ───────────────────────────────────────
+// GET  /api/admin/harvestable?currency=ZAR  — preview the harvestable yield
+// POST /api/admin/harvest { currency, platformFeeBps?, treasuryAddress? } — execute
+//
+// The admin JWT gates WHO may trigger this; the on-chain harvest is signed by the
+// backend wallet (ADMIN_EXECUTOR_ROLE). The platform cut defaults to the owner
+// treasury (PLATFORM_TREASURY_ADDRESS / DEPLOYER_ADMIN_ADDRESS).
+
+router.get('/harvestable', requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const currency = String(req.query.currency ?? '').trim();
+  if (!currency) { res.status(400).json({ error: 'currency required' }); return; }
+  try {
+    res.json({ currency: currency.toUpperCase(), harvestable: await getHarvestableYield(currency) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/harvest', requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const { currency, platformFeeBps, treasuryAddress } = req.body as
+    { currency?: string; platformFeeBps?: number; treasuryAddress?: string };
+  if (!currency) { res.status(400).json({ error: 'currency required' }); return; }
+  try {
+    const result = await harvestYield(currency, { platformFeeBps, treasuryAddress });
+    res.json({ currency: currency.toUpperCase(), ...result });
+  } catch (err) {
+    // NoYield and other contract reverts surface here as a 502 with the reason.
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
 
 // ── Contract deployments (admin-only) ─────────────────────────────────────────
 // Returns the recorded deployments enriched with the LIVE implementation address
@@ -497,15 +529,84 @@ router.post('/kyc-levels', async (req: Request, res: Response): Promise<void> =>
 
 // ── Treasury ──────────────────────────────────────────────────────────────────
 
-router.get('/treasury', (_req: Request, res: Response): void => {
+// Live on-chain treasury figures. ttza_balance / ttzw_balance are the token
+// TOTAL SUPPLY (minted minus burned = outstanding) in the token's raw units;
+// vault_usdc is the Vault's USDC holding. Each read is best-effort — a single
+// RPC/contract failure falls back to '0' rather than failing the whole page.
+router.get('/treasury', async (_req: Request, res: Response): Promise<void> => {
+  const ttzaAddr  = process.env['TREASURY_TOKEN_ZA_ADDRESS'] ?? config.contracts.treasuryTokenZA;
+  const ttzwAddr  = process.env['TREASURY_TOKEN_ZW_ADDRESS'] ?? config.contracts.treasuryTokenZW ?? '';
+  const vaultAddr = process.env['VAULT_CONTRACT_ADDRESS']    ?? config.contracts.vault;
+
+  const provider = new ethers.JsonRpcProvider(config.chain.rpcUrl);
+  const erc20 = (addr: string) => new ethers.Contract(
+    addr,
+    ['function totalSupply() view returns (uint256)', 'function balanceOf(address) view returns (uint256)'],
+    provider,
+  );
+
+  const totalSupply = async (addr?: string): Promise<string> => {
+    if (!addr) return '0';
+    try { return ((await erc20(addr).totalSupply()) as bigint).toString(); } catch { return '0'; }
+  };
+
+  const vaultUsdc = async (): Promise<string> => {
+    if (!vaultAddr) return '0';
+    try {
+      const vault = new ethers.Contract(vaultAddr, ['function usdcToken() view returns (address)'], provider);
+      const usdc  = await vault.usdcToken() as string;
+      return ((await erc20(usdc).balanceOf(vaultAddr)) as bigint).toString();
+    } catch { return '0'; }
+  };
+
+  const [ttza_balance, ttzw_balance, vault_usdc] = await Promise.all([
+    totalSupply(ttzaAddr), totalSupply(ttzwAddr || undefined), vaultUsdc(),
+  ]);
+
   res.json({
-    ttza_address:   process.env['TREASURY_TOKEN_ZA_ADDRESS']  ?? config.contracts.treasuryTokenZA,
-    ttzw_address:   process.env['TREASURY_TOKEN_ZW_ADDRESS']  ?? '',
-    vault_address:  process.env['VAULT_CONTRACT_ADDRESS']     ?? config.contracts.vault,
-    ttza_balance:   '0',
-    ttzw_balance:   '0',
-    vault_usdc:     '0',
+    ttza_address:  ttzaAddr,
+    ttzw_address:  ttzwAddr,
+    vault_address: vaultAddr,
+    ttza_balance,
+    ttzw_balance,
+    vault_usdc,
+    // Dev cash-in tool is available only outside production.
+    dev_tools: config.server.env !== 'production',
   });
+});
+
+// ── Dev cash-in (POC ONLY — must not ship to production) ──────────────────────
+// Sepolia has no real fiat rail, so this simulates a deposit: mint TTZA bank-cash
+// backing into the Vault and credit the recipient's spendable Vault ZAR balance
+// (the unified-ledger claim consumers actually hold and send — they never hold
+// the treasury token directly). Hard-gated to non-production environments.
+router.post('/treasury/dev-credit', requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  if (config.server.env === 'production') {
+    res.status(403).json({ error: 'Dev cash-in is disabled in production' });
+    return;
+  }
+  try {
+    const { to, amount } = req.body as { to?: string; amount?: string };
+    if (!to || !/^0x[0-9a-fA-F]{40}$/.test(to)) { res.status(400).json({ error: 'Valid 0x recipient address required' }); return; }
+    if (!amount) { res.status(400).json({ error: 'amount required' }); return; }
+
+    let units: bigint;
+    try { units = ethers.parseUnits(String(amount), 2); } catch { res.status(400).json({ error: 'Invalid amount' }); return; }
+    if (units <= 0n) { res.status(400).json({ error: 'Amount must be positive' }); return; }
+
+    const vaultAddr = process.env['VAULT_CONTRACT_ADDRESS'] ?? config.contracts.vault;
+    if (!vaultAddr) { res.status(500).json({ error: 'No vault configured' }); return; }
+
+    // 1. Mint TTZA backing into the Vault reserve (raises total supply).
+    const mintTx = await mintTreasuryZA(vaultAddr, units);
+    // 2. Issue the recipient their spendable ZAR claim on the Vault ledger.
+    const creditTx = await vaultAdminCredit(to, units, 'ZAR');
+
+    res.json({ success: true, to, amount: String(amount), units: units.toString(), mintTx, creditTx });
+  } catch (err) {
+    console.error('[POST /api/admin/treasury/dev-credit]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 // ── Paymaster ─────────────────────────────────────────────────────────────────

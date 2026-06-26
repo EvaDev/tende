@@ -233,4 +233,74 @@ contract ConsumerTest is Test {
         vm.expectRevert();
         UUPSUpgradeable(address(consumer)).upgradeToAndCall(address(newImpl), "");
     }
+
+    // ── ERC-4337 wallet setup (v1.1.0) ─────────────────────────────────────────
+
+    address internal constant MODULE_4337  = address(0x4337);
+    address internal constant MODULE_SETUP  = address(0x5e7);
+
+    /// Decode the captured setup() initializer (selector stripped) into its args.
+    function _decodeSetup() internal view returns (
+        address[] memory owners, uint256 threshold, address to, bytes memory data, address fallbackHandler
+    ) {
+        bytes memory init = factory.lastInitializer();
+        bytes memory body = new bytes(init.length - 4);
+        for (uint256 i = 0; i < body.length; i++) body[i] = init[i + 4];
+        (owners, threshold, to, data, fallbackHandler, , , ) =
+            abi.decode(body, (address[], uint256, address, bytes, address, address, uint256, address));
+    }
+
+    function test_DeployWallet_PlainSafe_WhenNo4337Config() public {
+        // setUp() left 4337 config unset → plain 1.4.1 setup (to=0, no module data).
+        vm.prank(backend);
+        consumer.registerConsumer(keccak256("plain.eth"), keccak256("P"), ZA_CODE, 0, makeAddr("pOwner"));
+
+        (address[] memory owners, uint256 threshold, address to, bytes memory data, address fb) = _decodeSetup();
+        assertEq(owners.length, 1);
+        assertEq(threshold, 1);
+        assertEq(to, address(0));
+        assertEq(data.length, 0);
+        assertEq(fb, address(0)); // test inited fallback handler as address(0)
+    }
+
+    function test_DeployWallet_4337Safe_WhenConfigured() public {
+        vm.prank(admin);
+        consumer.setSafe4337Config(MODULE_4337, MODULE_SETUP);
+        assertEq(consumer.safe4337Module(), MODULE_4337);
+        assertEq(consumer.safeModuleSetup(), MODULE_SETUP);
+
+        vm.prank(backend);
+        consumer.registerConsumer(keccak256("aa4337.eth"), keccak256("A"), ZA_CODE, 0, makeAddr("aOwner"));
+
+        (, , address to, bytes memory data, address fb) = _decodeSetup();
+        // setup() delegatecalls SafeModuleSetup.enableModules([module]); fallback = module.
+        assertEq(to, MODULE_SETUP);
+        assertEq(fb, MODULE_4337);
+        address[] memory modules = new address[](1);
+        modules[0] = MODULE_4337;
+        assertEq(
+            keccak256(data),
+            keccak256(abi.encodeWithSignature("enableModules(address[])", modules))
+        );
+    }
+
+    function test_SetSafe4337Config_OnlyAdmin() public {
+        vm.prank(stranger);
+        vm.expectRevert();
+        consumer.setSafe4337Config(MODULE_4337, MODULE_SETUP);
+    }
+
+    function test_SetSafe4337Config_CanDisable() public {
+        vm.startPrank(admin);
+        consumer.setSafe4337Config(MODULE_4337, MODULE_SETUP);
+        consumer.setSafe4337Config(address(0), address(0)); // back to plain
+        vm.stopPrank();
+        assertEq(consumer.safe4337Module(), address(0));
+
+        vm.prank(backend);
+        consumer.registerConsumer(keccak256("off.eth"), keccak256("O"), ZA_CODE, 0, makeAddr("oOwner"));
+        (, , address to, bytes memory data,) = _decodeSetup();
+        assertEq(to, address(0));
+        assertEq(data.length, 0);
+    }
 }

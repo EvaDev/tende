@@ -6,15 +6,21 @@ import {ERC1967Proxy}    from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Prox
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 import {TreasuryToken} from "../src/TreasuryToken.sol";
+import {MockConsumer}  from "./mocks/MockConsumer.sol";
 
 contract TreasuryTokenTest is Test {
     TreasuryToken internal token;
+    MockConsumer  internal consumer;
 
     address internal admin    = makeAddr("admin");
     address internal minter   = makeAddr("minter");
+    address internal complianceOp    = makeAddr("complianceOp");
     address internal alice    = makeAddr("alice");
     address internal bob      = makeAddr("bob");
     address internal stranger = makeAddr("stranger");
+
+    bytes32 internal constant ZA = keccak256("ZA");
+    bytes32 internal constant ZW = keccak256("ZW");
 
     uint256 internal constant INITIAL_SUPPLY = 100_000; // 1,000.00 in 2-decimal units
 
@@ -27,8 +33,12 @@ contract TreasuryTokenTest is Test {
             abi.encodeCall(TreasuryToken.initialize, ("1Remit ZA Token", "TTZA", admin, INITIAL_SUPPLY))
         )));
 
+        consumer = new MockConsumer();
+
         vm.startPrank(admin);
         token.grantRole(token.MINTER_ROLE(), minter);
+        token.grantRole(token.COMPLIANCE_ROLE(), complianceOp);
+        token.setConsumerContract(address(consumer));
         vm.stopPrank();
     }
 
@@ -234,5 +244,186 @@ contract TreasuryTokenTest is Test {
         vm.prank(stranger);
         vm.expectRevert();
         UUPSUpgradeable(address(token)).upgradeToAndCall(address(newImpl), "");
+    }
+
+    // ── Compliance gate (v1.1.0) ───────────────────────────────────────────────
+
+    function test_Compliance_DisabledByDefault_TransferAllowed() public {
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        // complianceEnabled is false → no KYC/country gate
+        vm.prank(alice);
+        token.transfer(bob, 400);
+        assertEq(token.balanceOf(bob), 400);
+    }
+
+    function test_Compliance_DomesticTreasury_NoKycRequired() public {
+        // Same country, both KYC level 0 → treasury domestic P2P allowed without KYC
+        consumer.setConsumer(alice, ZA, 0);
+        consumer.setConsumer(bob,   ZA, 0);
+        vm.prank(admin);
+        token.setComplianceEnabled(true);
+
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        vm.prank(alice);
+        token.transfer(bob, 400);
+        assertEq(token.balanceOf(bob), 400);
+    }
+
+    function test_Compliance_UnverifiedRecipientReverts() public {
+        consumer.setConsumer(alice, ZA, 1); // bob NOT registered
+        vm.prank(admin);
+        token.setComplianceEnabled(true);
+
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(TreasuryToken.RecipientNotVerified.selector, bob));
+        token.transfer(bob, 400);
+    }
+
+    function test_Compliance_ConsumerToWhitelistedMerchant_Allowed() public {
+        // Merchant is NOT a registered consumer, but is whitelisted as a trusted
+        // settlement address → consumer can pay them in TT.
+        consumer.setConsumer(alice, ZA, 0); // domestic consumer, no KYC
+        vm.startPrank(admin);
+        token.setComplianceEnabled(true);
+        token.addToWhitelist(bob); // bob = merchant
+        vm.stopPrank();
+
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        vm.prank(alice);
+        token.transfer(bob, 400);
+        assertEq(token.balanceOf(bob), 400);
+    }
+
+    function test_Compliance_WhitelistedManagedByAgent() public {
+        // Backend (COMPLIANCE_ROLE), not just admin, can whitelist a merchant
+        vm.prank(complianceOp);
+        token.addToWhitelist(bob);
+        assertTrue(token.whitelisted(bob));
+
+        vm.prank(stranger);
+        vm.expectRevert();
+        token.addToWhitelist(alice);
+    }
+
+    function test_Compliance_CrossBorder_Reverts() public {
+        // Treasury token is country-specific → cross-border transfer is blocked,
+        // regardless of KYC level (both fully KYC'd here).
+        consumer.setConsumer(alice, ZA, 2);
+        consumer.setConsumer(bob,   ZW, 2);
+        vm.prank(admin);
+        token.setComplianceEnabled(true);
+
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(TreasuryToken.CrossBorderNotAllowed.selector, ZA, ZW));
+        token.transfer(bob, 400);
+    }
+
+    // ── Partial freeze (v1.1.0) ─────────────────────────────────────────────────
+
+    function test_Freeze_BlocksMovingFrozenPortion() public {
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+
+        vm.prank(complianceOp);
+        token.freezePartialTokens(alice, 700); // only 300 spendable
+
+        vm.prank(alice);
+        token.transfer(bob, 300); // unfrozen portion → ok
+        assertEq(token.balanceOf(bob), 300);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(TreasuryToken.InsufficientUnfrozenBalance.selector, alice, 0, 1));
+        token.transfer(bob, 1); // would dip into frozen
+    }
+
+    function test_Freeze_CannotExceedBalance() public {
+        vm.prank(minter);
+        token.mint(alice, 500);
+        vm.prank(complianceOp);
+        vm.expectRevert(abi.encodeWithSelector(TreasuryToken.FreezeExceedsBalance.selector, alice, 500, 600));
+        token.freezePartialTokens(alice, 600);
+    }
+
+    function test_Freeze_WrongRoleReverts() public {
+        vm.prank(minter);
+        token.mint(alice, 500);
+        vm.prank(stranger);
+        vm.expectRevert();
+        token.freezePartialTokens(alice, 100);
+    }
+
+    function test_Unfreeze_RestoresSpendable() public {
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        vm.prank(complianceOp);
+        token.freezePartialTokens(alice, 700);
+        vm.prank(complianceOp);
+        token.unfreezePartialTokens(alice, 700);
+
+        vm.prank(alice);
+        token.transfer(bob, 1_000); // fully spendable again
+        assertEq(token.balanceOf(bob), 1_000);
+    }
+
+    function test_Burn_AutoUnfreezesWhenBalanceDropsBelowFrozen() public {
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        vm.prank(complianceOp);
+        token.freezePartialTokens(alice, 1_000); // fully frozen
+
+        // Privileged burn bypasses the freeze block and auto-unfreezes the burned part
+        vm.prank(minter);
+        token.burn(alice, 400);
+
+        assertEq(token.balanceOf(alice), 600);
+        assertEq(token.frozenTokens(alice), 600); // clamped to remaining balance
+    }
+
+    // ── Forced transfer (v1.1.0) ────────────────────────────────────────────────
+
+    function test_ForcedTransfer_MovesFrozenTokens() public {
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        vm.prank(complianceOp);
+        token.freezePartialTokens(alice, 1_000);
+
+        vm.expectEmit(true, true, false, true, address(token));
+        emit TreasuryToken.ForcedTransfer(alice, bob, 1_000, complianceOp);
+
+        vm.prank(complianceOp);
+        token.forcedTransfer(alice, bob, 1_000); // clawback ignores freeze
+
+        assertEq(token.balanceOf(alice), 0);
+        assertEq(token.balanceOf(bob), 1_000);
+        assertEq(token.frozenTokens(alice), 0); // auto-cleared
+    }
+
+    function test_ForcedTransfer_BypassesBlacklistAndPause() public {
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        vm.startPrank(admin);
+        token.addToBlacklist(alice); // sanctioned holder
+        token.pause();               // token-wide pause
+        vm.stopPrank();
+
+        vm.prank(complianceOp);
+        token.forcedTransfer(alice, bob, 1_000); // recovery still works
+
+        assertEq(token.balanceOf(bob), 1_000);
+    }
+
+    function test_ForcedTransfer_WrongRoleReverts() public {
+        vm.prank(minter);
+        token.mint(alice, 1_000);
+        vm.prank(stranger);
+        vm.expectRevert();
+        token.forcedTransfer(alice, bob, 100);
     }
 }

@@ -28,7 +28,11 @@ contract Vault is
     using SafeERC20 for IERC20;
 
     /// @notice Implementation version. Bump on every upgrade (constant, in bytecode).
-    string public constant VERSION = "1.0.0";
+    /// 1.1.0 — ERC-4626-style share ledger + yield harvesting via price-per-share.
+    string public constant VERSION = "1.1.0";
+
+    /// @notice Basis-points denominator (100% = 10_000).
+    uint16 public constant BPS_DENOMINATOR = 10_000;
 
     // ── Roles ─────────────────────────────────────────────────────────────────
 
@@ -47,18 +51,22 @@ contract Vault is
     error InvalidCurrency();
     error InsufficientBalance(address user, bytes32 currency, uint256 have, uint256 need);
     error InsufficientVaultTokenBalance(address token, uint256 have, uint256 need);
-    error CountryMismatch(bytes32 senderCountry, bytes32 recipientCountry);
     error KycLevelInsufficient(address user, uint8 have, uint8 need);
     error RemittanceLocked(address user);
     error RemittanceNotLocked(address user);
     error TokenAlreadyRegistered(address token);
     error TokenNotSupported(address token);
     error DestinationNotAllowed(bytes32 destinationCode);
+    error FeeTooHigh(uint16 bps);
+    error NoYield(bytes32 currencyCode);
 
     // ── Core storage ──────────────────────────────────────────────────────────
 
-    /// user → currencyCode → balance (in token units; 2 dec for ZAR, 6 dec for USDC)
-    mapping(address => mapping(bytes32 => uint256)) public unifiedBalance;
+    /// user → currencyCode → SHARES held. Asset value = convertToAssets(shares).
+    /// SLOT-COMPATIBLE with the v1.0.0 `unifiedBalance` mapping it replaces (same
+    /// type & position); safe to reinterpret because all balances are zero at the
+    /// time of the v1.1.0 upgrade. Read asset balances via unifiedBalance(user,cur).
+    mapping(address => mapping(bytes32 => uint256)) private _shares;
 
     /// token address → currencyCode it backs
     mapping(address => bytes32) public tokenCurrency;
@@ -84,6 +92,26 @@ contract Vault is
     mapping(bytes32 => bool) public isAllowedDestination;
     bytes32[] private _allowedDestinations;
 
+    // ── Share ledger (v1.1.0) ─────────────────────────────────────────────────
+    // APPEND-ONLY: declared after every pre-existing state variable so the UUPS
+    // proxy storage layout is preserved across the upgrade. Do NOT reorder.
+
+    /// currencyCode → total shares issued. Bootstraps 1:1 with assets on first credit.
+    mapping(bytes32 => uint256) public totalShares;
+
+    /// currencyCode → recorded asset backing (ERC-4626 "total assets"). Grows on
+    /// credit/deposit, shrinks on debit/withdraw/swap-out. harvest() raises this
+    /// by the user share of accrued yield, which lifts price-per-share for every
+    /// holder at once — no per-user crediting needed. Harvestable yield is the gap
+    /// between actual backing-token holdings and this figure.
+    mapping(bytes32 => uint256) public totalAssets;
+
+    /// Trusted counterparties (merchants, platform treasury) — KYB-verified
+    /// endpoints that are exempt from the consumer-KYC requirement on transfer().
+    /// A merchant is registered here at onboarding so consumers can pay it (e.g. in
+    /// USDC) without the merchant being a registered consumer. APPEND-ONLY.
+    mapping(address => bool) public trustedCounterparty;
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     event Credited(address indexed user, bytes32 indexed currencyCode, uint256 amount, address indexed creditor);
@@ -98,6 +126,9 @@ contract Vault is
     event TreasuryTokenSet(bytes32 indexed currencyCode, address indexed treasuryToken);
     event DestinationAdded(bytes32 indexed countryCode);
     event DestinationRemoved(bytes32 indexed countryCode);
+    event YieldHarvested(bytes32 indexed currencyCode, uint256 yieldDelta, uint256 platformCut, uint256 userYield, address indexed treasury);
+    event TotalAssetsReconciled(bytes32 indexed currencyCode, uint256 oldValue, uint256 newValue);
+    event TrustedCounterpartySet(address indexed account, bool trusted);
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
@@ -175,6 +206,19 @@ contract Vault is
         consumerContract = IConsumer(consumer);
     }
 
+    /// @notice Mark `account` as a trusted counterparty (merchant / platform
+    ///         treasury), exempt from the consumer-KYC requirement in transfer().
+    ///         Called by the backend at merchant onboarding. ADMIN_EXECUTOR_ROLE
+    ///         (the backend already holds it) — no separate agent role on the Vault.
+    function setTrustedCounterparty(address account, bool trusted)
+        external
+        onlyRole(ADMIN_EXECUTOR_ROLE)
+    {
+        if (account == address(0)) revert ZeroAddress();
+        trustedCounterparty[account] = trusted;
+        emit TrustedCounterpartySet(account, trusted);
+    }
+
     /// @notice Add a permitted remittance destination country (admin-expandable for post-pilot).
     function addAllowedDestination(bytes32 countryCode)
         external
@@ -214,7 +258,7 @@ contract Vault is
         if (amount == 0) revert ZeroAmount();
         if (currencyCode == bytes32(0)) revert InvalidCurrency();
 
-        unifiedBalance[user][currencyCode] += amount;
+        _creditAssets(user, currencyCode, amount);
         emit Credited(user, currencyCode, amount, msg.sender);
     }
 
@@ -225,10 +269,8 @@ contract Vault is
     {
         if (user == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
-        uint256 bal = unifiedBalance[user][currencyCode];
-        if (bal < amount) revert InsufficientBalance(user, currencyCode, bal, amount);
 
-        unifiedBalance[user][currencyCode] = bal - amount;
+        _debitAssets(user, currencyCode, amount);
         emit Debited(user, currencyCode, amount);
     }
 
@@ -241,7 +283,7 @@ contract Vault is
         if (amount == 0) revert ZeroAmount();
         if (currencyCode == bytes32(0)) revert InvalidCurrency();
 
-        unifiedBalance[user][currencyCode] += amount;
+        _creditAssets(user, currencyCode, amount);
         emit Credited(user, currencyCode, amount, msg.sender);
     }
 
@@ -259,23 +301,37 @@ contract Vault is
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
-        uint256 bal = unifiedBalance[from][currencyCode];
+        uint256 fromShares = _shares[from][currencyCode];
+        uint256 bal = _convertToAssets(currencyCode, fromShares, false);
         if (bal < amount) revert InsufficientBalance(from, currencyCode, bal, amount);
 
-        // Country-match check: only enforced when Consumer contract is set and both are registered
+        // Compliance: Vault balances (unified / tradeable / USD) MAY cross borders
+        // — unlike the country-specific TreasuryToken — but every party must be
+        // verified. Each side must be EITHER a KYC'd consumer (level >= 1) OR a
+        // trusted counterparty (merchant / platform treasury — KYB-verified, so a
+        // consumer can pay a merchant without the merchant being a consumer).
+        // getKycLevel returns 0 for unregistered wallets, so a non-consumer that is
+        // not trusted is rejected. Enforced only when a Consumer is set.
         if (address(consumerContract) != address(0)) {
-            bool fromRegistered = consumerContract.isRegistered(from);
-            bool toRegistered   = consumerContract.isRegistered(to);
-            if (fromRegistered && toRegistered) {
-                bytes32 fromCountry = consumerContract.getCountryCode(from);
-                bytes32 toCountry   = consumerContract.getCountryCode(to);
-                if (fromCountry != toCountry) revert CountryMismatch(fromCountry, toCountry);
+            if (!trustedCounterparty[from]) {
+                uint8 fromKyc = consumerContract.getKycLevel(from);
+                if (fromKyc < 1) revert KycLevelInsufficient(from, fromKyc, 1);
+            }
+            if (!trustedCounterparty[to]) {
+                uint8 toKyc = consumerContract.getKycLevel(to);
+                if (toKyc < 1) revert KycLevelInsufficient(to, toKyc, 1);
             }
         }
 
+        // Move shares (not assets) so totalShares/totalAssets are unchanged.
+        // Round up the shares to move, capped at sender's balance (handles the
+        // exact-full-balance case without leaving 1-wei share dust stranded).
+        uint256 moveShares = _convertToShares(currencyCode, amount, true);
+        if (moveShares > fromShares) moveShares = fromShares;
+
         // CEI: effects before any external interactions
-        unifiedBalance[from][currencyCode] = bal - amount;
-        unifiedBalance[to][currencyCode]  += amount;
+        _shares[from][currencyCode] = fromShares - moveShares;
+        _shares[to][currencyCode]  += moveShares;
 
         emit Transferred(from, to, amount, currencyCode);
     }
@@ -323,11 +379,8 @@ contract Vault is
         if (amount == 0) revert ZeroAmount();
         if (!isAllowedDestination[destinationCountryCode]) revert DestinationNotAllowed(destinationCountryCode);
 
-        uint256 bal = unifiedBalance[from][currencyCode];
-        if (bal < amount) revert InsufficientBalance(from, currencyCode, bal, amount);
-
         // CEI: deduct balance and clear lock before external burn call
-        unifiedBalance[from][currencyCode] = bal - amount;
+        _debitAssets(from, currencyCode, amount);
         remittanceLocked[from] = false;
 
         // Burn corresponding TreasuryToken — must always succeed or whole tx reverts
@@ -366,7 +419,7 @@ contract Vault is
         IERC20(token).safeTransferFrom(depositor, address(this), amount);
         uint256 received = IERC20(token).balanceOf(address(this)) - balBefore;
 
-        unifiedBalance[beneficiary][currencyCode] += received;
+        _creditAssets(beneficiary, currencyCode, received);
 
         emit Deposited(depositor, beneficiary, token, received);
     }
@@ -391,11 +444,8 @@ contract Vault is
         bytes32 currencyCode = tokenCurrency[token];
         if (currencyCode == bytes32(0)) revert TokenNotSupported(token);
 
-        uint256 bal = unifiedBalance[from][currencyCode];
-        if (bal < amount) revert InsufficientBalance(from, currencyCode, bal, amount);
-
-        // CEI: deduct before external transfer
-        unifiedBalance[from][currencyCode] = bal - amount;
+        // CEI: deduct (burns shares + reduces recorded assets) before external transfer
+        _debitAssets(from, currencyCode, amount);
 
         IERC20(token).safeTransfer(recipient, amount);
 
@@ -437,14 +487,13 @@ contract Vault is
         address localToken = currencyTokenAt[localCurrency][0];
         if (localToken == address(0)) revert InvalidCurrency();
 
-        uint256 buyerBal = unifiedBalance[buyer][localCurrency];
-        if (buyerBal < localAmount) revert InsufficientBalance(buyer, localCurrency, buyerBal, localAmount);
-
         uint256 vaultTokenBal = IERC20(localToken).balanceOf(address(this));
         if (vaultTokenBal < localAmount) revert InsufficientVaultTokenBalance(localToken, vaultTokenBal, localAmount);
 
-        // CEI: deduct buyer's local balance before any external calls
-        unifiedBalance[buyer][localCurrency] = buyerBal - localAmount;
+        // CEI: deduct buyer's local balance before any external calls. _debitAssets
+        // burns shares and reduces recorded assets (the local backing token is
+        // about to leave the vault via the swap).
+        _debitAssets(buyer, localCurrency, localAmount);
 
         // Burn corresponding TreasuryToken from buyer
         address tt = currencyTreasuryToken[localCurrency];
@@ -470,10 +519,118 @@ contract Vault is
         // Revoke residual approval
         IERC20(localToken).forceApprove(address(swapRouter), 0);
 
-        // Credit buyer's USDC balance with actual received amount
-        unifiedBalance[buyer][USDC_CODE] += usdcReceived;
+        // Credit buyer's USDC balance with actual received amount. The USDC now
+        // sits in the vault as backing for USDC_CODE — record it so harvest()
+        // does not mistake swapped-in USDC for yield.
+        _creditAssets(buyer, USDC_CODE, usdcReceived);
 
         emit UsdPurchased(buyer, localAmount, localCurrency, usdcReceived);
+    }
+
+    // ── Share-ledger views (ERC-4626 semantics) ──────────────────────────────
+
+    /// @notice A user's spendable balance in asset units. ABI-compatible with the
+    ///         v1.0.0 `unifiedBalance` getter; now derived from shares × price.
+    function unifiedBalance(address user, bytes32 currencyCode) public view returns (uint256) {
+        return _convertToAssets(currencyCode, _shares[user][currencyCode], false);
+    }
+
+    /// @notice A user's raw share count for a currency.
+    function sharesOf(address user, bytes32 currencyCode) external view returns (uint256) {
+        return _shares[user][currencyCode];
+    }
+
+    /// @notice Assets one would receive for `shares` (round down).
+    function convertToAssets(bytes32 currencyCode, uint256 shares) external view returns (uint256) {
+        return _convertToAssets(currencyCode, shares, false);
+    }
+
+    /// @notice Shares one would receive for depositing `assets` (round down).
+    function convertToShares(bytes32 currencyCode, uint256 assets) external view returns (uint256) {
+        return _convertToShares(currencyCode, assets, false);
+    }
+
+    /// @notice Price per 1e18 shares, in asset units. 1e18 before any deposit.
+    function pricePerShare(bytes32 currencyCode) external view returns (uint256) {
+        return _convertToAssets(currencyCode, 1e18, false);
+    }
+
+    // ── Yield harvesting ──────────────────────────────────────────────────────
+
+    /// @notice View the currently harvestable yield for a currency: the gap
+    ///         between the vault's *actual* backing-token holdings and the
+    ///         recorded `totalAssets`. Returns 0 if holdings <= recorded.
+    /// @dev    Safe to call by anyone; pure read. The backend uses this to decide
+    ///         whether a harvest() is worth the gas before scheduling one.
+    function harvestableYield(bytes32 currencyCode) public view returns (uint256) {
+        uint256 actual = _actualHoldings(currencyCode);
+        uint256 recorded = totalAssets[currencyCode];
+        return actual > recorded ? actual - recorded : 0;
+    }
+
+    /// @notice Harvest accrued yield for a currency. Sweeps the platform's cut to
+    ///         the treasury as real tokens; the user portion accrues to holders
+    ///         automatically by raising price-per-share — NO per-user crediting.
+    ///
+    ///         Yield = (actual backing-token holdings) − (recorded totalAssets).
+    ///         platformCut → treasuryAddress as real tokens. The user portion is
+    ///         added to totalAssets WITHOUT minting shares, so every holder's
+    ///         convertToAssets(shares) rises pro-rata in one O(1) write (ERC-4626).
+    ///
+    ///         No baseline seeding is needed when upgraded with empty vaults:
+    ///         totalAssets starts at 0 and only ever tracks credited deposits.
+    ///
+    /// @param currencyCode    Currency to harvest (e.g. keccak256("USDC"))
+    /// @param treasuryAddress Recipient of the platform's cut (real tokens)
+    /// @param platformFeeBps  Platform share of the yield, in basis points (<= 10_000)
+    /// @return userYield      Asset amount distributed to holders via price-per-share
+    function harvest(bytes32 currencyCode, address treasuryAddress, uint16 platformFeeBps)
+        external
+        nonReentrant
+        onlyRole(ADMIN_EXECUTOR_ROLE)
+        returns (uint256 userYield)
+    {
+        if (treasuryAddress == address(0)) revert ZeroAddress();
+        if (platformFeeBps > BPS_DENOMINATOR) revert FeeTooHigh(platformFeeBps);
+
+        uint256 actualHoldings = _actualHoldings(currencyCode);
+        uint256 recorded = totalAssets[currencyCode];
+        if (actualHoldings <= recorded) revert NoYield(currencyCode);
+
+        uint256 yieldDelta  = actualHoldings - recorded;
+        uint256 platformCut = (yieldDelta * platformFeeBps) / BPS_DENOMINATOR;
+        userYield           = yieldDelta - platformCut;
+
+        // Raise recorded assets by the user portion only. With totalShares
+        // unchanged, this lifts price-per-share for every holder at once. After
+        // the sweep below, totalAssets == actual holdings again (no re-harvest).
+        totalAssets[currencyCode] = recorded + userYield;
+
+        // Sweep the platform's cut out as real tokens, drawn from the primary
+        // backing token (index 0). For single-backing-token currencies (the pilot
+        // reality) this is exactly where the yield accrued; safeTransfer reverts
+        // if that token can't cover the cut.
+        if (platformCut > 0) {
+            address primaryToken = currencyTokenAt[currencyCode][0];
+            if (primaryToken == address(0)) revert InvalidCurrency();
+            IERC20(primaryToken).safeTransfer(treasuryAddress, platformCut);
+        }
+
+        emit YieldHarvested(currencyCode, yieldDelta, platformCut, userYield, treasuryAddress);
+    }
+
+    /// @notice Emergency correction of recorded assets for a currency (drift repair).
+    ///         WARNING: directly rescales price-per-share, hence every holder's
+    ///         balance — DEFAULT_ADMIN_ROLE only. Not needed in normal operation
+    ///         when the vault was upgraded empty (totalAssets self-tracks).
+    function reconcileTotalAssets(bytes32 currencyCode, uint256 newTotal)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        if (currencyCode == bytes32(0)) revert InvalidCurrency();
+        uint256 old = totalAssets[currencyCode];
+        totalAssets[currencyCode] = newTotal;
+        emit TotalAssetsReconciled(currencyCode, old, newTotal);
     }
 
     // ── Pause ─────────────────────────────────────────────────────────────────
@@ -491,6 +648,74 @@ contract Vault is
     function _authorizeUpgrade(address) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // ── Internal helpers ──────────────────────────────────────────────────────
+
+    /// @dev Sum the vault's actual balance across every backing token registered
+    ///      for a currency. For plain and rebasing ERC20s balanceOf is sufficient;
+    ///      a revaluing/share token would need its own exchange rate applied here.
+    function _actualHoldings(bytes32 currencyCode) internal view returns (uint256 total) {
+        uint256 count = currencyTokenCount[currencyCode];
+        for (uint256 i = 0; i < count; ) {
+            total += IERC20(currencyTokenAt[currencyCode][i]).balanceOf(address(this));
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Convert assets → shares. Bootstraps 1:1 while the pool is empty.
+    ///      Not vulnerable to the classic ERC-4626 inflation attack: totalAssets
+    ///      is tracked explicitly (credited amounts), never read from balanceOf,
+    ///      so a direct token donation cannot move price until an admin harvest.
+    function _convertToShares(bytes32 currencyCode, uint256 assets, bool roundUp)
+        internal
+        view
+        returns (uint256 shares)
+    {
+        uint256 ts = totalShares[currencyCode];
+        uint256 ta = totalAssets[currencyCode];
+        if (ts == 0 || ta == 0) return assets; // 1:1 bootstrap
+        shares = (assets * ts) / ta;
+        if (roundUp && mulmod(assets, ts, ta) != 0) shares += 1;
+    }
+
+    /// @dev Convert shares → assets. Returns 0 before any shares exist.
+    function _convertToAssets(bytes32 currencyCode, uint256 shares, bool roundUp)
+        internal
+        view
+        returns (uint256 assets)
+    {
+        uint256 ts = totalShares[currencyCode];
+        if (ts == 0) return 0;
+        uint256 ta = totalAssets[currencyCode];
+        assets = (shares * ta) / ts;
+        if (roundUp && mulmod(shares, ta, ts) != 0) assets += 1;
+    }
+
+    /// @dev Mint shares for `assets` credited to `user` and grow recorded assets.
+    ///      Round shares DOWN so existing holders are never diluted by a credit.
+    function _creditAssets(address user, bytes32 currencyCode, uint256 assets) internal {
+        uint256 newShares = _convertToShares(currencyCode, assets, false);
+        _shares[user][currencyCode] += newShares;
+        totalShares[currencyCode]   += newShares;
+        totalAssets[currencyCode]   += assets;
+    }
+
+    /// @dev Burn the shares backing `assets` from `user` and shrink recorded assets.
+    ///      Reverts if the user's asset balance is below `assets`. Round shares to
+    ///      burn UP (so a user can't extract more value than they give up), capped
+    ///      at their share balance to clear dust on a full-balance withdrawal.
+    function _debitAssets(address user, bytes32 currencyCode, uint256 assets) internal {
+        uint256 userShares = _shares[user][currencyCode];
+        uint256 bal = _convertToAssets(currencyCode, userShares, false);
+        if (bal < assets) revert InsufficientBalance(user, currencyCode, bal, assets);
+
+        uint256 burnShares = (assets == bal)
+            ? userShares                                          // full exit: burn all
+            : _convertToShares(currencyCode, assets, true);       // partial: round up
+        if (burnShares > userShares) burnShares = userShares;     // never underflow
+
+        _shares[user][currencyCode] = userShares - burnShares;
+        totalShares[currencyCode]  -= burnShares;
+        totalAssets[currencyCode]  -= assets;
+    }
 
     function _addAllowedDestination(bytes32 countryCode) internal {
         if (countryCode == bytes32(0)) revert InvalidCurrency();

@@ -110,6 +110,34 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Quick actions */}
+      <div className="mx-6 mt-4 grid grid-cols-2 gap-3">
+        <button
+          onClick={() => navigate('/pay')}
+          className="flex items-center gap-3 bg-brand-card border border-brand-accent/20 rounded-2xl px-4 py-3 shadow-sm active:scale-95 transition-transform"
+        >
+          <div className="w-9 h-9 rounded-xl bg-brand-accent/10 flex items-center justify-center">
+            <ArrowUpRight size={16} className="text-brand-accent" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-semibold text-brand-accent">Pay</p>
+            <p className="text-[11px] text-brand-accent/50">to an @tag</p>
+          </div>
+        </button>
+        <button
+          onClick={() => navigate('/send')}
+          className="flex items-center gap-3 bg-brand-card border border-brand-accent/20 rounded-2xl px-4 py-3 shadow-sm active:scale-95 transition-transform"
+        >
+          <div className="w-9 h-9 rounded-xl bg-brand-accent/10 flex items-center justify-center">
+            <ArrowUpRight size={16} className="text-brand-accent" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-semibold text-brand-accent">Remit</p>
+            <p className="text-[11px] text-brand-accent/50">cross-border</p>
+          </div>
+        </button>
+      </div>
+
       {/* USD Savings */}
       {profile?.kyc.allowsUsdSavings && (
         <div className="mx-6 mt-4 rounded-2xl bg-brand-card border border-brand-accent/20 p-4 flex items-center gap-4 shadow-sm">

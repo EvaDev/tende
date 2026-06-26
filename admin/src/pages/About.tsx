@@ -11,6 +11,9 @@ const KEY_DECISIONS: { title: string; detail: string }[] = [
   { title: 'Safe smart wallets + passkeys', detail: 'Consumer wallets are ERC-4337 Safe accounts whose signer is a device passkey (WebAuthn / Face ID / Touch ID). No seed phrases, no MetaMask. Gas is sponsored by Pimlico.' },
   { title: 'Decentralised identity (idOS)', detail: 'KYC credentials are issued and stored via idOS; biometric wallet recovery (FaceSign) is on the roadmap.' },
   { title: 'Payment tags via ENS', detail: 'Human-readable payment tags are ENS subdomains, hashed on-chain for privacy.' },
+  { title: 'Value model: one rand balance, protocol keeps the yield', detail: 'Consumers hold a single fungible balance as Vault-ledger shares (an ERC-4626 claim) — never the treasury token directly. Behind it the protocol holds a reserve (Phase 1: 100% TTZA bank cash; later also tradeable ZAR). The spend balance is flat 1:1 and earns no yield — any vault yield accrues to the protocol. Full detail in Docs → Concepts.' },
+  { title: 'User-signed P2P, self-custody', detail: 'Wallet-to-wallet sends are the user’s own passkey-signed Vault.transfer (on-chain KYC gate: both parties verified, cross-border allowed). Gasless to the consumer — the backend relays the Safe transaction and pays gas. New Safes are ERC-4337-ready, so submission can move to a Pimlico paymaster later without re-onboarding.' },
+  { title: 'Cross-border spend vouchers under CASP', detail: 'Cross-border value moves as an on-chain crypto-asset transfer (CASP licence), dual-KYC, settled to the merchant in fiat. Postgres is an index of on-chain events for reporting, not a second ledger. See Docs → Events & Reporting.' },
   { title: 'Sessions: 48h JWT, no silent refresh', detail: 'Logins last 48 hours; on expiry the user re-authenticates with their passkey. No refresh tokens.' },
   { title: 'Networks', detail: 'Pilot contracts run on Sepolia; mainnet is used for ENS and for DEX liquidity/pricing of listed assets.' },
 ];
@@ -70,8 +73,9 @@ export default function About() {
         <p className="text-sm text-gray-700 leading-relaxed">
           {appName} lets people hold and move money without ever touching a seed phrase, gas fee, or
           blockchain concept. Each consumer gets a smart-contract wallet secured by their device
-          biometrics. Value is held as a local-currency treasury token or in USD, and remittances
-          settle on-chain while the experience stays as simple as a banking app.
+          biometrics. Value is held as a single in-app currency balance — a claim on the protocol's
+          reserve, recorded as Vault-ledger shares — plus optional USD, and remittances settle
+          on-chain while the experience stays as simple as a banking app.
         </p>
       </Section>
 
@@ -79,11 +83,49 @@ export default function About() {
         <ul className="space-y-2 list-disc pl-5">
           <Feature name="Account Abstraction">ERC-4337 Safe smart accounts with gasless, paymaster-sponsored transactions — users never pay or see gas.</Feature>
           <Feature name="Passkey Authentication">Passwordless, biometric login (Face ID / Touch ID / Windows Hello) via WebAuthn. The passkey is the wallet signer — no seed phrases.</Feature>
-          <Feature name="Multi-Currency Balances">A local-currency treasury token (e.g. TTZA for ZAR) and a USD balance, with live FX used only to display a combined total.</Feature>
+          <Feature name="Multi-Currency Balances">By default consumers get a fungible spendable local-currency balance plus a USD balance — backed by whitelisted token holdings. Other optional 'investment' tokens eg Gold follow the same whitelisting pattern; Total holding converted to local currency via live FX conversion for display purposes..</Feature>
           <Feature name="Payment Tags">Human-readable ENS subdomains (e.g. <code>name.imali.eth</code>) for peer-to-peer transfers, hashed on-chain for privacy.</Feature>
           <Feature name="Decentralised Identity">KYC credentials issued and stored via idOS, with biometric wallet recovery (FaceSign) on the roadmap.</Feature>
           <Feature name="Merchant Integration">Merchant onboarding, product catalogue, and point-of-sale settlement.</Feature>
           <Feature name="Transaction History">On-chain tracking of purchases, top-ups, and remittances.</Feature>
+          <Feature name="Reporting">On-chain events are indexed in a RDB for all reporting purposes.</Feature>
+        </ul>
+      </Section>
+
+      <Section title="Transfer Restrictions &amp; Compliance">
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Compliance is enforced directly in the contracts. Consumers hold and send a balance on the
+          <strong> Vault</strong> ledger (a claim — backed by treasury cash, never the token itself).
+          The country-specific <strong>treasury token</strong> is internal backing and merchant
+          settlement; it moves only between the Vault, platform treasury and merchants.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+            <thead className="bg-brand-accent/5 text-gray-900">
+              <tr>
+                <th className="text-left font-semibold p-3">What moves</th>
+                <th className="text-left font-semibold p-3">Cross-border?</th>
+                <th className="text-left font-semibold p-3">KYC required?</th>
+              </tr>
+            </thead>
+            <tbody className="text-gray-700">
+              <tr className="border-t border-gray-200">
+                <td className="p-3"><span className="font-semibold">Treasury token</span> (backing / settlement)</td>
+                <td className="p-3"><span className="font-semibold text-brand-accent">No</span> — country-specific, domestic only</td>
+                <td className="p-3">No — moves only between the Vault, treasury &amp; merchants</td>
+              </tr>
+              <tr className="border-t border-gray-200">
+                <td className="p-3"><span className="font-semibold">Vault balance</span> (what consumers hold &amp; send)</td>
+                <td className="p-3"><span className="font-semibold text-brand-accent">Yes</span> — allowed</td>
+                <td className="p-3">Yes — both parties KYC'd, local <em>and</em> foreign</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <ul className="space-y-2 list-disc pl-5">
+          <Feature name="Who holds a treasury token">It's held as backing in the protocol reserve, by the platform treasury, and by merchants who accept it as settlement — all on the token's trusted allow-list. Consumers don't hold the token directly; they hold a Vault-ledger claim and are verified via the Consumer registry.</Feature>
+          <Feature name="Trusted settlement addresses">Platform and merchant wallets are whitelisted (by a compliance agent at onboarding) and are exempt from the same-country consumer rule, so a consumer can always pay a merchant.</Feature>
+          <Feature name="Agent controls">A compliance agent can freeze a balance, and force-transfer tokens for AML clawback or to recover a lost passkey wallet. These bypass the normal gates and are logged on-chain.</Feature>
         </ul>
       </Section>
 

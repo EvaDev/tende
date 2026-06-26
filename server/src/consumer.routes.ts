@@ -177,6 +177,173 @@ router.get('/kyc', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// ── P2P transfer (user-signed, backend-relayed) ───────────────────────────────
+// Self-custody send over the Vault unified ledger. The consumer's passkey signs
+// the SafeTx for Vault.transfer; the backend relays execTransaction and pays gas
+// (Option A). The on-chain KYC gate ("each party a KYC'd consumer or a trusted
+// counterparty") is enforced by the Vault, not here — these checks are pre-flight
+// UX so the user isn't asked to sign a transaction that would revert.
+
+import {
+  buildVaultTransferSafeTx, relaySafeTx, unifiedBalanceOf,
+  kycLevelOf, isTrustedCounterparty, type SafeTx,
+} from './safeRelayService.js';
+import { b64urlToBuf } from './webauthnService.js';
+
+// Decimal places per currency for amount parsing (pilot: ZAR cash = 2, USDC = 6).
+const CURRENCY_DECIMALS: Record<string, number> = { ZAR: 2, USDC: 6 };
+function decimalsFor(currency: string): number {
+  return CURRENCY_DECIMALS[currency.toUpperCase()] ?? 2;
+}
+
+// Pending SafeTx store: the server holds the exact tx it built so the client
+// cannot tamper between prepare and submit. Keyed by safeTxHash. Short TTL.
+const PENDING_TTL_MS = 5 * 60 * 1000;
+interface PendingTransfer {
+  safeTx: SafeTx; senderWallet: string; toAddress: string;
+  amount: bigint; currency: string; expiry: number;
+}
+const pendingTransfers = new Map<string, PendingTransfer>();
+function sweepPending() {
+  const now = Date.now();
+  for (const [h, p] of pendingTransfers) if (p.expiry < now) pendingTransfers.delete(h);
+}
+
+/// Resolve a recipient — either a 0x address or an @tag (ENS subdomain registered
+/// on the Consumer contract). Returns the recipient's spend-wallet address.
+async function resolveRecipient(toRaw: string): Promise<string> {
+  const v = toRaw.trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(v)) return ethers.getAddress(v);
+
+  const tag = v.replace(/^@/, '').toLowerCase().split('.')[0];
+  if (!/^[a-z0-9-]{3,32}$/.test(tag)) throw new Error('Invalid recipient — use a 0x address or @tag');
+  if (!config.contracts.consumer) throw new Error('Consumer contract not configured');
+
+  const consumer = new ethers.Contract(
+    config.contracts.consumer,
+    ['function getConsumerByEns(bytes32 ensHash) view returns (tuple(address spendWallet,address saveWallet,address usdWallet,bytes32 displayNameHash,bytes32 ensSubdomainHash,bytes32 countryCode,uint8 kycLevel,bool isActive,uint256 globalConsumerId))'],
+    getProvider(),
+  );
+  try {
+    const d = await consumer.getConsumerByEns(ethers.keccak256(ethers.toUtf8Bytes(tag)));
+    return d.spendWallet as string;
+  } catch {
+    throw new Error(`No account found for @${tag}`);
+  }
+}
+
+// ── POST /api/consumer/transfer/prepare ───────────────────────────────────────
+// Body: { to: "0x…" | "@tag", amount: "100.00", currency: "ZAR" }
+// Returns the SafeTx hash to sign (as a base64url WebAuthn challenge) + a summary.
+router.post('/transfer/prepare', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { to, amount, currency } = req.body as { to?: string; amount?: string; currency?: string };
+    if (!to || !amount || !currency) { res.status(400).json({ error: 'Missing to, amount, or currency' }); return; }
+
+    const senderWallet = req.consumer!.walletAddress;
+    let amountUnits: bigint;
+    try { amountUnits = ethers.parseUnits(String(amount), decimalsFor(currency)); }
+    catch { res.status(400).json({ error: 'Invalid amount' }); return; }
+    if (amountUnits <= 0n) { res.status(400).json({ error: 'Amount must be positive' }); return; }
+
+    const toAddress = await resolveRecipient(to);
+    if (toAddress.toLowerCase() === senderWallet.toLowerCase()) {
+      res.status(400).json({ error: 'Cannot send to yourself' }); return;
+    }
+
+    // Pre-flight compliance mirror of the on-chain gate (better errors before signing).
+    const [senderKyc, recipientKyc, recipientTrusted, balance] = await Promise.all([
+      kycLevelOf(senderWallet), kycLevelOf(toAddress),
+      isTrustedCounterparty(toAddress), unifiedBalanceOf(senderWallet, currency),
+    ]);
+    if (senderKyc < 1) { res.status(403).json({ error: 'Your account is not yet verified (KYC level 1 required to send)', code: 'SENDER_KYC' }); return; }
+    if (recipientKyc < 1 && !recipientTrusted) {
+      res.status(409).json({ error: 'Recipient is not verified yet. Send to escrow until they onboard.', code: 'RECIPIENT_UNVERIFIED' }); return;
+    }
+    if (balance < amountUnits) {
+      res.status(409).json({ error: 'Insufficient balance', code: 'INSUFFICIENT_BALANCE' }); return;
+    }
+
+    const { safeTx, safeTxHash } = await buildVaultTransferSafeTx({
+      safeAddress: senderWallet, toAddress, amount: amountUnits, currency,
+    });
+
+    sweepPending();
+    pendingTransfers.set(safeTxHash, {
+      safeTx, senderWallet, toAddress, amount: amountUnits, currency, expiry: Date.now() + PENDING_TTL_MS,
+    });
+
+    res.json({
+      safeTxHash,
+      // The WebAuthn challenge is the raw 32-byte SafeTx hash, base64url-encoded.
+      challenge: Buffer.from(safeTxHash.slice(2), 'hex').toString('base64url'),
+      rpId: config.webauthn.rpId,
+      to: toAddress, amount: String(amount), currency: currency.toUpperCase(),
+      nonce: safeTx.nonce,
+    });
+  } catch (err) {
+    console.error('[POST /api/consumer/transfer/prepare]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── POST /api/consumer/transfer/submit ────────────────────────────────────────
+// Body: { safeTxHash, credentialId, authenticatorData, clientDataJSON, signature }
+//   (the last three base64url, exactly as returned by the passkey get() assertion)
+router.post('/transfer/submit', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { safeTxHash, credentialId, authenticatorData, clientDataJSON, signature } =
+      req.body as Record<string, string>;
+    if (!safeTxHash || !credentialId || !authenticatorData || !clientDataJSON || !signature) {
+      res.status(400).json({ error: 'Missing signature fields' }); return;
+    }
+
+    const pending = pendingTransfers.get(safeTxHash);
+    if (!pending || pending.expiry < Date.now()) {
+      res.status(410).json({ error: 'Transfer expired — please start again', code: 'EXPIRED' }); return;
+    }
+    if (pending.senderWallet.toLowerCase() !== req.consumer!.walletAddress.toLowerCase()) {
+      res.status(403).json({ error: 'Transfer does not belong to this account' }); return;
+    }
+
+    // Defence-in-depth: the signed challenge must equal this SafeTx hash.
+    const clientData = JSON.parse(b64urlToBuf(clientDataJSON).toString('utf8')) as { challenge?: string };
+    const signedHash = '0x' + b64urlToBuf(clientData.challenge ?? '').toString('hex');
+    if (signedHash.toLowerCase() !== safeTxHash.toLowerCase()) {
+      res.status(400).json({ error: 'Signed challenge does not match the prepared transfer' }); return;
+    }
+
+    // Resolve the Safe owner (the passkey signer) for this credential, and confirm
+    // it belongs to the authenticated wallet.
+    const cred = await db.query<{ wallet_address: string; signer_address: string | null }>(
+      `SELECT wallet_address, signer_address FROM webauthn_credentials WHERE credential_id = $1`,
+      [credentialId],
+    );
+    const row = cred.rows[0];
+    if (!row || !row.signer_address) { res.status(404).json({ error: 'Unknown passkey credential' }); return; }
+    if (row.wallet_address.toLowerCase() !== pending.senderWallet.toLowerCase()) {
+      res.status(403).json({ error: 'Credential does not match the sending wallet' }); return;
+    }
+
+    const txHash = await relaySafeTx({
+      safeAddress: pending.senderWallet,
+      ownerSignerAddress: row.signer_address,
+      safeTx: pending.safeTx,
+      assertion: {
+        authenticatorData: b64urlToBuf(authenticatorData),
+        clientDataJSON: b64urlToBuf(clientDataJSON),
+        derSignature: b64urlToBuf(signature),
+      },
+    });
+
+    pendingTransfers.delete(safeTxHash);
+    res.json({ success: true, txHash, to: pending.toAddress, amount: pending.amount.toString(), currency: pending.currency });
+  } catch (err) {
+    console.error('[POST /api/consumer/transfer/submit]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // ── Investments (non-custodial) ───────────────────────────────────────────────
 // The broker ledger (platform-held positions, buy/sell endpoints) was removed:
 // under the non-custodial DEX model the asset lives in the consumer's own Safe

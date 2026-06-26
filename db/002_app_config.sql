@@ -11,7 +11,7 @@ CREATE TABLE app_config (
 );
 
 INSERT INTO app_config (key, value, description) VALUES
-    ('app.name',              'Tende',    'Application display name'),
+    ('app.name',              'iMali',    'Application display name'),
     ('brand.color.bg',        'A8C8E8',   'Main background color (hex, no #)'),
     ('brand.color.accent',    '5C2D1E',   'Accent / button color (hex, no #)'),
     ('brand.color.text',      'FFFFFF',   'Primary text color on accent backgrounds (hex, no #)'),

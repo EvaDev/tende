@@ -51,6 +51,7 @@ export const config = {
     consumer:        optional('CONSUMER_CONTRACT_ADDRESS'),
     vault:           optional('VAULT_CONTRACT_ADDRESS'),
     treasuryTokenZA: optional('TREASURY_TOKEN_ZA_ADDRESS'),
+    treasuryTokenZW: optional('TREASURY_TOKEN_ZW_ADDRESS'),
   },
 
   safe: {
@@ -104,8 +105,35 @@ export const config = {
     privateKey: required('BACKEND_SIGNER_PRIVATE_KEY'),
   },
 
+  platform: {
+    // Treasury that receives the platform's cut of vault yield on harvest().
+    // Defaults to the owner wallet (DEPLOYER_ADMIN_ADDRESS); falls back to it when
+    // PLATFORM_TREASURY_ADDRESS is unset.
+    treasuryAddress: optional('PLATFORM_TREASURY_ADDRESS') || optional('DEPLOYER_ADMIN_ADDRESS'),
+    // Default platform share of harvested yield, in basis points (1000 = 10%).
+    harvestFeeBps:   parseInt(optional('PLATFORM_HARVEST_FEE_BPS', '1000')),
+    // Spend-cash currencies — flat 1:1 to consumers, so ALL their yield goes to the
+    // protocol (harvest forced to 100%). Comma-separated currency codes.
+    cashCurrencies:  optional('PLATFORM_CASH_CURRENCIES', 'ZAR').split(',').map(s => s.trim().toUpperCase()).filter(Boolean),
+    // On-chain account that holds unclaimed spend-voucher value (domestic; released
+    // to the KYC'd beneficiary on claim). Defaults to the treasury / owner wallet.
+    escrowAddress:   optional('PLATFORM_ESCROW_ADDRESS') || optional('PLATFORM_TREASURY_ADDRESS') || optional('DEPLOYER_ADMIN_ADDRESS'),
+  },
+
   vault: {
     mode: optional('VAULT_MODE', 'poc'),
+  },
+
+  indexer: {
+    enabled:       optional('INDEXER_ENABLED', 'true') !== 'false',
+    // First-run start block. Unset → start at the current head (forward-only), which
+    // avoids a slow historical catch-up on a rate-limited RPC. Set to the deploy
+    // block to backfill history.
+    startBlock:    process.env['INDEXER_START_BLOCK'] ? parseInt(process.env['INDEXER_START_BLOCK']) : null,
+    // Alchemy's free tier caps eth_getLogs at a 10-block range — keep chunks <= 10.
+    chunkBlocks:   parseInt(optional('INDEXER_CHUNK_BLOCKS', '10')),
+    confirmations: parseInt(optional('INDEXER_CONFIRMATIONS', '5')),
+    pollMs:        parseInt(optional('INDEXER_POLL_MS', '15000')),
   },
 
   fx: {

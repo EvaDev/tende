@@ -4,7 +4,7 @@ import { useAccount } from 'wagmi';
 import MerchantSignup from '@/pages/MerchantSignup';
 import {
   LayoutDashboard, Store, Package, Globe, Coins,
-  Users, Landmark, Zap, Settings, ScrollText, ClipboardList, Info, Boxes, Gem,
+  Users, Landmark, Zap, Settings, ScrollText, ClipboardList, Info, Boxes, Gem, BookOpen, BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppConfig, useAppName } from '@/hooks/useAppConfig';
@@ -18,14 +18,16 @@ const NAV = [
   { to: '/consumers',  label: 'Consumers',  icon: Users },
   { to: '/countries',  label: 'Countries',  icon: Globe },
   { to: '/currencies', label: 'Currencies', icon: Coins },
-  { to: '/treasury',   label: 'Treasury',   icon: Landmark },
-  { to: '/paymaster',     label: 'Paymaster',     icon: Zap },
-  { to: '/registration',  label: 'Registration',  icon: ClipboardList },
+  { to: '/treasury',   label: 'Treasury',   icon: Landmark, adminOnly: true },
+  { to: '/paymaster',     label: 'Paymaster',     icon: Zap, adminOnly: true },
+  { to: '/registration',  label: 'Registration',  icon: ClipboardList, adminOnly: true },
   { to: '/settings',      label: 'Settings',      icon: Settings },
   { to: '/logs',       label: 'Logs',       icon: ScrollText },
+  { to: '/reports',    label: 'Reports',    icon: BarChart3, adminOnly: true },
   { to: '/assets',     label: 'Assets',     icon: Gem, adminOnly: true },
   { to: '/contracts',  label: 'Contracts',  icon: Boxes, adminOnly: true },
   { to: '/about',      label: 'About',      icon: Info },
+  { to: '/docs',       label: 'Docs',       icon: BookOpen },
 ];
 
 const NETWORKS: Record<number, { label: string; testnet: boolean }> = {
@@ -37,14 +39,17 @@ export default function Layout() {
   const { isConnected, address, chainId, chain } = useAccount();
   const appConfig = useAppConfig();
   const appName = useAppName();
-  const { role, resolved } = useRole();
+  const { role, resolved, error } = useRole();
   const { country } = useDetectedCountry();
 
   const net = chainId ? (NETWORKS[chainId] ?? { label: chain?.name ?? `Chain ${chainId}`, testnet: true }) : null;
 
   // A connected wallet we don't recognise → merchant onboarding.
   const probing     = isConnected && !resolved;
-  const needsSignup = isConnected && resolved && role === 'none';
+  // Only treat as a new wallet when the probe SUCCEEDED and said 'none' — a backend
+  // error must not masquerade a real admin as a merchant.
+  const needsSignup = isConnected && resolved && !error && role === 'none';
+  const backendDown = isConnected && resolved && error;
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -128,6 +133,20 @@ export default function Layout() {
           {probing ? (
             <div className="flex items-center justify-center py-20">
               <div className="w-8 h-8 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            </div>
+          ) : backendDown ? (
+            <div className="max-w-md mx-auto mt-20 rounded-xl border border-red-300 bg-red-50 p-6 text-center">
+              <h3 className="text-lg font-semibold text-red-800">Can’t reach the server</h3>
+              <p className="text-sm text-red-700 mt-2">
+                The backend isn’t responding, so your role couldn’t be confirmed. This is a
+                server/database issue — not your wallet. Check the API is running, then retry.
+              </p>
+              <button
+                onClick={() => window.location.reload()}
+                className="mt-4 px-4 py-2 text-sm rounded-lg bg-red-700 text-white font-medium hover:bg-red-800"
+              >
+                Retry
+              </button>
             </div>
           ) : needsSignup ? (
             <MerchantSignup />

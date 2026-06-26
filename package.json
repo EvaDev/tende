@@ -1,0 +1,14 @@
+{
+  "name": "imali-dev",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev launcher for the 1Remit/iMali stack (Foundry contracts live alongside the server/admin/consumer Node apps).",
+  "scripts": {
+    "dev": "concurrently -k -n server,admin,consumer -c green,cyan,magenta \"cd server && npm run dev\" \"cd admin && npm run dev\" \"cd consumer && npm run dev\"",
+    "dev:admin": "concurrently -k -n server,admin -c green,cyan \"cd server && npm run dev\" \"cd admin && npm run dev\"",
+    "dev:consumer": "concurrently -k -n server,consumer -c green,magenta \"cd server && npm run dev\" \"cd consumer && npm run dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
