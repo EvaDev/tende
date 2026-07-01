@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/api';
-import { statusColor, shortAddr } from '@/lib/utils';
+import { shortAddr } from '@/lib/utils';
 
 interface Consumer {
   id: string;
   wallet_address: string;
   safe_address?: string;
-  kyc_level: string;
+  kyc_level: number | string;
+  kyc_level_name?: string;
+  ens_subdomain?: string;
   idos_profile: boolean;
   created_at: string;
 }
@@ -27,18 +29,19 @@ export default function Consumers() {
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b">
-            <tr>{['Wallet','Safe','KYC Level','idOS','Joined'].map(h =>
+            <tr>{['Tag','Wallet','Safe','KYC Level','idOS','Joined'].map(h =>
               <th key={h} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y">
-            {rows.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">No consumers yet</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400">No consumers yet</td></tr>}
             {rows.map(c => (
               <tr key={c.id} className="hover:bg-gray-50">
+                <td className="px-4 py-3 font-medium">{c.ens_subdomain ? `@${c.ens_subdomain}` : '—'}</td>
                 <td className="px-4 py-3 font-mono text-xs">{shortAddr(c.wallet_address)}</td>
                 <td className="px-4 py-3 font-mono text-xs">{c.safe_address ? shortAddr(c.safe_address) : '—'}</td>
-                <td className="px-4 py-3"><Badge className={statusColor(c.kyc_level)}>{c.kyc_level}</Badge></td>
+                <td className="px-4 py-3"><Badge className="bg-brand-accent/10 text-brand-accent">{c.kyc_level_name ?? `Level ${c.kyc_level}`}</Badge></td>
                 <td className="px-4 py-3">
-                  <Badge className={c.idos_profile ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}>
+                  <Badge className={c.idos_profile ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>
                     {c.idos_profile ? 'Active' : 'None'}
                   </Badge>
                 </td>

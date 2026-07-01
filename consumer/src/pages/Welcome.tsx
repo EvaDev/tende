@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { getAppName } from '@/lib/brand';
+import logoUrl from '@/assets/iMali_icon.png';
 
 export default function Welcome() {
   const navigate = useNavigate();
@@ -7,13 +8,11 @@ export default function Welcome() {
   return (
     <div className="flex flex-col items-center justify-between min-h-dvh px-8 py-16">
       <div className="flex-1 flex flex-col items-center justify-center gap-8">
-        <div className="w-28 h-28 rounded-3xl bg-brand-card shadow-lg flex items-center justify-center">
-          <span className="text-4xl font-bold text-brand-accent">{appName.slice(0, 2)}</span>
-        </div>
+        <img src={logoUrl} alt={appName} className="w-28 h-28 object-contain drop-shadow-lg" />
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold text-brand-accent">{appName}</h1>
           <p className="text-brand-accent/60 text-lg leading-snug">
-            Send money home.<br />Simply.
+            Your Money
           </p>
         </div>
       </div>

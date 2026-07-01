@@ -119,7 +119,7 @@ contract VaultTest is Test {
     }
 
     function test_Transfer_UnregisteredRecipient_Reverts() public {
-        // Recipient not a consumer → getKycLevel 0 → fails the KYC gate
+        // Recipient not a consumer and not trusted → fails the registration gate
         mockConsumer.setConsumer(alice, keccak256("ZA"), 1);
         // bob NOT registered
 
@@ -128,7 +128,7 @@ contract VaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(
-            Vault.KycLevelInsufficient.selector, bob, uint8(0), uint8(1)
+            Vault.NotRegisteredParty.selector, bob
         ));
         vault.transfer(bob, 40_000, ZAR_CODE);
     }
@@ -156,8 +156,9 @@ contract VaultTest is Test {
         vault.setTrustedCounterparty(bob, true);
     }
 
-    function test_Transfer_SenderNotKycd_Reverts() public {
-        // Sender registered but KYC level 0 → blocked even for a domestic transfer
+    function test_Transfer_SenderLevel0_Succeeds() public {
+        // Sender registered at KYC level 0 (name+mobile) → allowed. Per-tier amount
+        // limits are enforced off-chain; the chain gate only checks registration.
         mockConsumer.setConsumer(alice, keccak256("ZA"), 0);
         mockConsumer.setConsumer(bob,   keccak256("ZA"), 1);
 
@@ -165,8 +166,22 @@ contract VaultTest is Test {
         vault.adminCredit(alice, CREDIT_AMOUNT, ZAR_CODE);
 
         vm.prank(alice);
+        vault.transfer(bob, 40_000, ZAR_CODE);
+
+        assertEq(vault.unifiedBalance(alice, ZAR_CODE), 60_000);
+        assertEq(vault.unifiedBalance(bob,   ZAR_CODE), 40_000);
+    }
+
+    function test_Transfer_UnregisteredSender_Reverts() public {
+        // Sender is neither a registered consumer nor a trusted counterparty
+        mockConsumer.setConsumer(bob, keccak256("ZA"), 1);
+        // alice NOT registered — give her shares directly via backend credit
+        vm.prank(backend);
+        vault.adminCredit(alice, CREDIT_AMOUNT, ZAR_CODE);
+
+        vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(
-            Vault.KycLevelInsufficient.selector, alice, uint8(0), uint8(1)
+            Vault.NotRegisteredParty.selector, alice
         ));
         vault.transfer(bob, 40_000, ZAR_CODE);
     }

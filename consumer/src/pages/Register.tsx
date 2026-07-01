@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, AlertCircle, CheckCircle2, Fingerprint, AtSign } from 'lucide-react';
+import { ChevronRight, AlertCircle, Fingerprint, AtSign } from 'lucide-react';
 import { api, setToken } from '@/lib/api';
 import { createPasskey, isPasskeySupported } from '@/lib/passkey';
-import { getEnsParentDomain, getAppName } from '@/lib/brand';
+import { getAppName } from '@/lib/brand';
 
 interface RegField {
   field_key: string; label: string;
@@ -42,7 +42,7 @@ function Btn({ children, onClick, disabled }: { children: React.ReactNode; onCli
 function Field({ label, required: req, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label: string; required?: boolean }) {
   return (
     <div className="space-y-1">
-      <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">{label}{req && ' *'}</label>
+      <label className="block text-xs text-white uppercase tracking-wide font-medium">{label}{req && ' *'}</label>
       <input {...props} className="w-full bg-brand-card border border-brand-accent/20 rounded-xl px-4 py-3 text-sm text-brand-accent outline-none focus:ring-2 focus:ring-brand-accent placeholder-brand-accent/30" />
     </div>
   );
@@ -51,7 +51,7 @@ function Field({ label, required: req, ...props }: React.InputHTMLAttributes<HTM
 function Select({ label, options, ...props }: React.SelectHTMLAttributes<HTMLSelectElement> & { label: string; options: string[] }) {
   return (
     <div className="space-y-1">
-      <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">{label}</label>
+      <label className="block text-xs text-white uppercase tracking-wide font-medium">{label}</label>
       <select {...props} className="w-full bg-brand-card border border-brand-accent/20 rounded-xl px-4 py-3 text-sm text-brand-accent outline-none focus:ring-2 focus:ring-brand-accent">
         <option value="">Select…</option>
         {options.map(o => <option key={o} value={o}>{o}</option>)}
@@ -141,10 +141,20 @@ export default function Register() {
 
   function set(k: keyof Form, v: string) { setForm(f => ({ ...f, [k]: v })); setError(''); }
 
+  // Registration done → go straight to Home (the celebratory "Account Created"
+  // panel is shown as a dismissable overlay on Home, so there's a real balance/home
+  // behind it). If the user came from a claim link, continue there instead.
+  function finish() {
+    const ret = sessionStorage.getItem('claimReturn');
+    if (ret) { sessionStorage.removeItem('claimReturn'); navigate(ret); return; }
+    sessionStorage.setItem('imali_welcome', '1');
+    navigate('/home');
+  }
+
   function nextStep() {
     const idx = activeSteps.indexOf(step as Step);
     const next = activeSteps[idx + 1];
-    if (next) setStep(next); else setStep('success');
+    if (next) setStep(next); else finish();
     setError('');
   }
   function prevStep() {
@@ -188,7 +198,7 @@ export default function Register() {
       });
       if (result.token) setToken(result.token);
       if (result.walletAddress) set('walletAddress', result.walletAddress);
-      setStep('success');
+      finish();
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes('ENS_TAKEN')) { setError('That account tag is taken — go back and choose another.'); setStep('tag'); return; }
@@ -208,39 +218,18 @@ export default function Register() {
     );
   }
 
-  if (step === 'success') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-dvh px-8 gap-8">
-        <div className="w-24 h-24 rounded-full bg-brand-accent/10 flex items-center justify-center">
-          <CheckCircle2 size={48} className="text-brand-accent" />
-        </div>
-        <div className="text-center space-y-2">
-          <h2 className="text-2xl font-bold text-brand-accent">Account Created!</h2>
-          <p className="text-brand-accent/60">Your {getAppName()} wallet is ready.</p>
-          {form.accountTag && <>
-            <p className="text-xl font-bold text-brand-accent mt-2">@{form.accountTag}</p>
-            <p className="text-xs text-brand-accent/50 font-mono">{form.accountTag}.{getEnsParentDomain()}</p>
-          </>}
-          <p className="text-3xl font-bold text-brand-accent mt-4">R0.00</p>
-          <p className="text-brand-accent/60 text-sm">Available Balance</p>
-        </div>
-        <Btn onClick={() => navigate('/home')}>Go to Home</Btn>
-      </div>
-    );
-  }
-
   const progressIdx = activeSteps.indexOf(step);
 
   return (
     <div className="flex flex-col min-h-dvh">
       <div className="px-6 pt-10 pb-4 space-y-4">
         <div className="flex items-center gap-4">
-          <button onClick={prevStep} className="text-brand-accent/60 text-lg">←</button>
+          <button onClick={prevStep} className="text-white text-lg">←</button>
           <div className="flex-1">
-            <p className="text-xs text-brand-accent/50 uppercase tracking-wide font-medium">
+            <p className="text-xs text-white uppercase tracking-wide font-medium">
               Step {progressIdx + 1} of {activeSteps.length}
             </p>
-            <h2 className="text-xl font-bold text-brand-accent">{STEP_LABELS[step]}</h2>
+            <h2 className="text-xl font-bold text-white">{STEP_LABELS[step]}</h2>
           </div>
         </div>
         <div className="flex gap-1">
@@ -259,11 +248,11 @@ export default function Register() {
 
         {step === 'mobile' && (
           <>
-            <p className="text-brand-accent/60 text-sm">
+            <p className="text-white text-sm">
               {isRequired('mobile') ? 'Enter your mobile number.' : 'Optionally add a mobile number (can be added later).'}
             </p>
             <div className="space-y-1">
-              <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">
+              <label className="block text-xs text-white uppercase tracking-wide font-medium">
                 Mobile Number{isRequired('mobile') && ' *'}
               </label>
               <div className="flex gap-2">
@@ -275,7 +264,7 @@ export default function Register() {
             </div>
             <Btn onClick={nextStep}>Continue <ChevronRight size={16} className="inline" /></Btn>
             {!isRequired('mobile') && (
-              <button onClick={nextStep} className="w-full text-sm text-brand-accent/50 text-center py-2">Skip for now</button>
+              <button onClick={nextStep} className="w-full text-sm text-white text-center py-2">Skip for now</button>
             )}
           </>
         )}
@@ -312,7 +301,7 @@ export default function Register() {
 
         {step === 'financial' && (
           <>
-            <p className="text-brand-accent/60 text-sm">Required for regulatory compliance.</p>
+            <p className="text-white text-sm">Required for regulatory compliance.</p>
             {isIncluded('occupation') && (
               <Select label="Occupation" options={occupations}
                 value={form.occupation} onChange={e => set('occupation', e.target.value)} />
@@ -335,7 +324,7 @@ export default function Register() {
               <p className="text-brand-accent/60 text-xs">Your permanent payment address — like a username for money.</p>
             </div>
             <div className="space-y-1">
-              <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">Account Tag *</label>
+              <label className="block text-xs text-white uppercase tracking-wide font-medium">Account Tag *</label>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-accent/50 font-medium text-sm">@</span>
                 <input
@@ -349,14 +338,14 @@ export default function Register() {
                 />
               </div>
               {form.accountTag.length >= 3 && (
-                <p className={`text-xs px-1 font-medium ${tagAvailable === true ? 'text-green-600' : tagAvailable === false ? 'text-brand-danger' : 'text-brand-accent/50'}`}>
-                  {tagAvailable === true ? `✓ ${form.accountTag}.${getEnsParentDomain()} is available`
-                   : tagAvailable === false ? `✗ ${form.accountTag} is already taken`
-                   : `Checking ${form.accountTag}.${getEnsParentDomain()}…`}
+                <p className={`text-xs px-1 font-medium ${tagAvailable === true ? 'text-white' : tagAvailable === false ? 'text-brand-danger' : 'text-white'}`}>
+                  {tagAvailable === true ? `✓ @${form.accountTag} is available`
+                   : tagAvailable === false ? `✗ @${form.accountTag} is already taken`
+                   : `Checking @${form.accountTag}…`}
                 </p>
               )}
             </div>
-            <p className="text-xs text-brand-accent/50 px-1">3–32 chars. Lowercase letters, numbers, hyphens only. Cannot be changed later.</p>
+            <p className="text-xs text-white px-1">3–32 chars. Lowercase letters, numbers, hyphens only. Cannot be changed later.</p>
             <Btn onClick={() => {
               if (!form.accountTag || !/^[a-z0-9-]{3,32}$/.test(form.accountTag)) { setError('Tag must be 3–32 lowercase letters, numbers or hyphens'); return; }
               if (tagAvailable === false) { setError('That tag is already taken'); return; }
@@ -384,9 +373,9 @@ export default function Register() {
               </div>
             </div>
             {form.accountTag && (
-              <div className="bg-brand-accent/5 border border-brand-accent/20 rounded-xl px-4 py-3">
-                <p className="text-xs text-brand-accent/50">Your account tag</p>
-                <p className="font-bold text-brand-accent">@{form.accountTag} · {form.accountTag}.{getEnsParentDomain()}</p>
+              <div className="bg-white/10 border border-white/20 rounded-xl px-4 py-3">
+                <p className="text-xs text-white">Your account tag</p>
+                <p className="font-bold text-white">@{form.accountTag}</p>
               </div>
             )}
             <Btn onClick={createWalletWithPasskey} disabled={loading}>

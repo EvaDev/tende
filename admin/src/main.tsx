@@ -12,9 +12,18 @@ import { installClientErrorReporter } from '@/lib/clientLog';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import App from './App';
 import './index.css';
+import faviconUrl from '@/assets/iMali_icon.png';
 
 // Forward uncaught client errors to the backend Logs feed (tagged source=admin)
 installClientErrorReporter('admin');
+
+// Point the favicon at the bundled (content-hashed) logo so it cache-busts whenever
+// the logo file changes — no stale icon after swapping src/assets/iMali_icon.png.
+(() => {
+  const link = (document.querySelector("link[rel~='icon']") as HTMLLinkElement) ?? document.createElement('link');
+  link.rel = 'icon'; link.href = faviconUrl;
+  document.head.appendChild(link);
+})();
 
 // Restore JWT from localStorage so write actions work after a page refresh
 restoreToken();

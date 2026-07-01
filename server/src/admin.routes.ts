@@ -7,9 +7,55 @@ import db from './db.js';
 import config from './config.js';
 import { requireAdmin } from './admin.middleware.js';
 import dexQuoteService from './dexQuoteService.js';
-import { getHarvestableYield, harvestYield, mintTreasuryZA, vaultAdminCredit } from './treasuryService.js';
+import { getHarvestableYield, harvestYield, mintUsdcToVault } from './treasuryService.js';
+import { reclaimExpiredClaims } from './escrowService.js';
+import { cashIn } from './cashInService.js';
 
 const router = express.Router();
+
+// Gate the whole admin router with requireAdmin, EXCEPT a small allowlist of
+// read-only endpoints that feed pages visible to everyone (the public Dashboard
+// counts + reference lists + the live Logs feed). Everything else — all writes,
+// and reads tied to admin-only pages (treasury, paymaster, registration-fields) —
+// needs the admin JWT. Per-route requireAdmin on already-gated handlers is harmless.
+// NOTE: `app.use('/api/admin', adminRouter)` prefix-matches /api/admin/logs, so this
+// guard runs for the SSE logs feed too (defined on `app` in index.ts) — it must be
+// allowlisted here or it 401s before reaching its handler.
+const PUBLIC_ADMIN_READS = new Set([
+  '/stats', '/merchants', '/products', '/consumers',
+  '/countries', '/currencies', '/kyc-levels', '/icons',
+]);
+router.use((req: Request, res: Response, next): void => {
+  const isPublicRead = req.method === 'GET' && (
+    PUBLIC_ADMIN_READS.has(req.path) ||
+    req.path.startsWith('/icons/') ||   // icon image bytes
+    req.path.startsWith('/logs')   ||   // live SSE log feed + history
+    /\/logo$/.test(req.path)            // merchant logo image
+  );
+  if (isPublicRead) { next(); return; }
+  requireAdmin(req, res, next);
+});
+
+// Resolve a recipient given a 0x address or an @tag (ENS subdomain registered on
+// the Consumer contract). Used by the dev tools so an operator can target "se1".
+async function resolveWalletOrTag(input: string): Promise<string> {
+  const v = (input || '').trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(v)) return ethers.getAddress(v);
+  const tag = v.replace(/^@/, '').toLowerCase().split('.')[0];
+  if (!/^[a-z0-9-]{3,32}$/.test(tag)) throw new Error('Enter a 0x address or @tag');
+  if (!config.contracts.consumer) throw new Error('Consumer contract not configured');
+  const consumer = new ethers.Contract(
+    config.contracts.consumer,
+    ['function getConsumerByEns(bytes32 ensHash) view returns (tuple(address spendWallet,address saveWallet,address usdWallet,bytes32 displayNameHash,bytes32 ensSubdomainHash,bytes32 countryCode,uint8 kycLevel,bool isActive,uint256 globalConsumerId))'],
+    new ethers.JsonRpcProvider(config.chain.rpcUrl),
+  );
+  try {
+    const d = await consumer.getConsumerByEns(ethers.keccak256(ethers.toUtf8Bytes(tag)));
+    return d.spendWallet as string;
+  } catch {
+    throw new Error(`No account found for @${tag}`);
+  }
+}
 
 // ── Vault yield harvesting (admin-only) ───────────────────────────────────────
 // GET  /api/admin/harvestable?currency=ZAR  — preview the harvestable yield
@@ -228,6 +274,29 @@ router.post('/merchants', async (req: Request, res: Response): Promise<void> => 
   }
 });
 
+// ── PATCH /api/admin/merchants/:id/status ─────────────────────────────────────
+// Admin-controlled trading status (requireAdmin via the router guard — it's a
+// non-GET, non-allowlisted path). Admins set PENDING → ACTIVE (trading) / INACTIVE.
+// Admins do NOT edit a merchant's name/logo/icon — that's the merchant's own via
+// the connected wallet (PATCH /api/merchants/me). Only verification_status changes.
+router.patch('/merchants/:id/status', async (req: Request, res: Response): Promise<void> => {
+  const VALID = ['PENDING', 'ACTIVE', 'INACTIVE'];
+  const s = String((req.body as { status?: string }).status ?? '').toUpperCase();
+  if (!VALID.includes(s)) { res.status(400).json({ error: `status must be one of: ${VALID.join(', ')}` }); return; }
+  try {
+    const r = await db.query(
+      `UPDATE merchants SET verification_status = $2, updated_at = NOW()
+       WHERE merchant_id = $1
+       RETURNING merchant_id as id, name, verification_status as status`,
+      [req.params.id, s],
+    );
+    if (!r.rows.length) { res.status(404).json({ error: 'Merchant not found' }); return; }
+    res.json(r.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // ── Products ──────────────────────────────────────────────────────────────────
 
 router.get('/products', async (_req: Request, res: Response): Promise<void> => {
@@ -277,10 +346,12 @@ router.post('/products', async (req: Request, res: Response): Promise<void> => {
 router.get('/consumers', async (_req: Request, res: Response): Promise<void> => {
   try {
     const r = await db.query(
-      `SELECT consumer_id as id, wallet_address, usd_wallet_address as safe_address,
-              kyc_level_id as kyc_level,
-              idos_credential_id IS NOT NULL as idos_profile, created_at
-       FROM consumers ORDER BY created_at DESC`,
+      `SELECT c.consumer_id as id, c.wallet_address, c.usd_wallet_address as safe_address,
+              c.kyc_level_id as kyc_level, k.level_name as kyc_level_name, c.ens_subdomain,
+              c.idos_credential_id IS NOT NULL as idos_profile, c.created_at
+       FROM consumers c
+       LEFT JOIN kyc_levels k ON k.level_id = c.kyc_level_id
+       ORDER BY c.created_at DESC`,
     );
     res.json(r.rows);
   } catch (err) {
@@ -529,50 +600,62 @@ router.post('/kyc-levels', async (req: Request, res: Response): Promise<void> =>
 
 // ── Treasury ──────────────────────────────────────────────────────────────────
 
-// Live on-chain treasury figures. ttza_balance / ttzw_balance are the token
-// TOTAL SUPPLY (minted minus burned = outstanding) in the token's raw units;
-// vault_usdc is the Vault's USDC holding. Each read is best-effort — a single
-// RPC/contract failure falls back to '0' rather than failing the whole page.
-router.get('/treasury', async (_req: Request, res: Response): Promise<void> => {
-  const ttzaAddr  = process.env['TREASURY_TOKEN_ZA_ADDRESS'] ?? config.contracts.treasuryTokenZA;
-  const ttzwAddr  = process.env['TREASURY_TOKEN_ZW_ADDRESS'] ?? config.contracts.treasuryTokenZW ?? '';
-  const vaultAddr = process.env['VAULT_CONTRACT_ADDRESS']    ?? config.contracts.vault;
+// Live on-chain treasury supplies as a DATA-DRIVEN list, so new treasury tokens
+// appear automatically (no per-token code change). Each row = a deployed treasury
+// token's totalSupply (minted − burned = outstanding), plus the Vault's USDC
+// holding. Reads are best-effort — a failed read falls back to '0'.
+// kind: 'treasury' = a closed-loop token WE mint (show as minted supply);
+//       'vault'    = an asset the platform HOLDS in the Vault (underlying holding).
+interface SupplyRow { token: string; label: string; address: string; decimals: number; supply: string; kind: 'treasury' | 'vault'; }
 
-  const provider = new ethers.JsonRpcProvider(config.chain.rpcUrl);
+router.get('/treasury', async (_req: Request, res: Response): Promise<void> => {
+  const vaultAddr = process.env['VAULT_CONTRACT_ADDRESS'] ?? config.contracts.vault;
+  const provider  = new ethers.JsonRpcProvider(config.chain.rpcUrl);
   const erc20 = (addr: string) => new ethers.Contract(
     addr,
-    ['function totalSupply() view returns (uint256)', 'function balanceOf(address) view returns (uint256)'],
+    ['function totalSupply() view returns (uint256)', 'function balanceOf(address) view returns (uint256)', 'function decimals() view returns (uint8)'],
     provider,
   );
 
-  const totalSupply = async (addr?: string): Promise<string> => {
-    if (!addr) return '0';
-    try { return ((await erc20(addr).totalSupply()) as bigint).toString(); } catch { return '0'; }
-  };
+  // Treasury tokens from the stablecoins registry (data-driven).
+  let rows: Array<{ code: string; address: string; decimals: number }> = [];
+  try {
+    const q = await db.query<{ code: string; address: string; decimals: number }>(
+      `SELECT s.internal_code AS code, s.contract_address AS address, cu.decimals
+         FROM stablecoins s JOIN currencies cu ON cu.currency_code = s.internal_code
+        WHERE s.is_treasury_token = TRUE AND s.is_deployed = TRUE AND s.contract_address IS NOT NULL
+        ORDER BY s.internal_code`,
+    );
+    rows = q.rows;
+  } catch { /* stablecoins table absent — fall through to env fallback */ }
+  // Fallback so the page isn't empty if the registry isn't seeded.
+  if (rows.length === 0 && (config.contracts.treasuryTokenZA)) {
+    rows = [{ code: 'TTZA', address: config.contracts.treasuryTokenZA, decimals: 2 }];
+  }
 
-  const vaultUsdc = async (): Promise<string> => {
-    if (!vaultAddr) return '0';
+  const supplies: SupplyRow[] = await Promise.all(rows.map(async (r) => {
+    let supply = '0';
+    let decimals = r.decimals ?? 2;
+    try {
+      const c = erc20(r.address);
+      supply = ((await c.totalSupply()) as bigint).toString();
+      decimals = Number(await c.decimals());   // on-chain decimals is authoritative (DB may differ)
+    } catch { /* keep defaults */ }
+    return { token: r.code, label: `${r.code} Supply`, address: r.address, decimals, supply, kind: 'treasury' as const };
+  }));
+
+  // Vault USDC holding (the reserve's USD leg).
+  let vaultUsdc = '0';
+  if (vaultAddr) {
     try {
       const vault = new ethers.Contract(vaultAddr, ['function usdcToken() view returns (address)'], provider);
       const usdc  = await vault.usdcToken() as string;
-      return ((await erc20(usdc).balanceOf(vaultAddr)) as bigint).toString();
-    } catch { return '0'; }
-  };
+      vaultUsdc = ((await erc20(usdc).balanceOf(vaultAddr)) as bigint).toString();
+    } catch { /* keep 0 */ }
+  }
+  supplies.push({ token: 'USDC', label: 'Vault USDC', address: vaultAddr ?? '', decimals: 6, supply: vaultUsdc, kind: 'vault' });
 
-  const [ttza_balance, ttzw_balance, vault_usdc] = await Promise.all([
-    totalSupply(ttzaAddr), totalSupply(ttzwAddr || undefined), vaultUsdc(),
-  ]);
-
-  res.json({
-    ttza_address:  ttzaAddr,
-    ttzw_address:  ttzwAddr,
-    vault_address: vaultAddr,
-    ttza_balance,
-    ttzw_balance,
-    vault_usdc,
-    // Dev cash-in tool is available only outside production.
-    dev_tools: config.server.env !== 'production',
-  });
+  res.json({ supplies, dev_tools: config.server.env !== 'production' });
 });
 
 // ── Dev cash-in (POC ONLY — must not ship to production) ──────────────────────
@@ -586,25 +669,192 @@ router.post('/treasury/dev-credit', requireAdmin, async (req: Request, res: Resp
     return;
   }
   try {
-    const { to, amount } = req.body as { to?: string; amount?: string };
-    if (!to || !/^0x[0-9a-fA-F]{40}$/.test(to)) { res.status(400).json({ error: 'Valid 0x recipient address required' }); return; }
-    if (!amount) { res.status(400).json({ error: 'amount required' }); return; }
+    const { to, amount, reference } = req.body as { to?: string; amount?: string; reference?: string };
+    if (!to || !amount) { res.status(400).json({ error: 'recipient (0x or @tag) and amount required' }); return; }
+
+    let recipient: string;
+    try { recipient = await resolveWalletOrTag(to); }
+    catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
 
     let units: bigint;
     try { units = ethers.parseUnits(String(amount), 2); } catch { res.status(400).json({ error: 'Invalid amount' }); return; }
     if (units <= 0n) { res.status(400).json({ error: 'Amount must be positive' }); return; }
 
-    const vaultAddr = process.env['VAULT_CONTRACT_ADDRESS'] ?? config.contracts.vault;
-    if (!vaultAddr) { res.status(500).json({ error: 'No vault configured' }); return; }
+    // Bank-deposit reference backs the mint (auto-generated if the admin leaves it blank).
+    const ref = String(reference ?? '').trim() || `DEV-${Date.now()}`;
+    const r = await cashIn({ wallet: recipient, amountUnits: units, currency: 'ZAR', reference: ref, kind: 'bank_deposit', source: 'admin' });
 
-    // 1. Mint TTZA backing into the Vault reserve (raises total supply).
-    const mintTx = await mintTreasuryZA(vaultAddr, units);
-    // 2. Issue the recipient their spendable ZAR claim on the Vault ledger.
-    const creditTx = await vaultAdminCredit(to, units, 'ZAR');
-
-    res.json({ success: true, to, amount: String(amount), units: units.toString(), mintTx, creditTx });
+    res.json({ success: true, to: recipient, amount: String(amount), reference: ref, mintTx: r.mintTx, creditTx: r.creditTx });
   } catch (err) {
-    console.error('[POST /api/admin/treasury/dev-credit]', err);
+    const status = (err as { status?: number }).status ?? 500;
+    if (status === 500) console.error('[POST /api/admin/treasury/dev-credit]', err);
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+// ── Dev: simulate a USDC reserve purchase (POC ONLY) ──────────────────────────
+// Grows the platform's USD reserve by minting the Vault's mock USDC into the Vault.
+// This is the USD analogue of dev cash-in (which mints TTZA for the ZAR reserve).
+// On mainnet this would be a real USDC purchase (fiat→USDC via an exchange/OTC) or
+// an on-chain swap. Records an audit reference. Hard-gated to non-production.
+router.post('/treasury/buy-usdc', requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  if (config.server.env === 'production') {
+    res.status(403).json({ error: 'Simulated USDC purchase is disabled in production' });
+    return;
+  }
+  try {
+    const { amount, reference } = req.body as { amount?: string; reference?: string };
+    if (!amount) { res.status(400).json({ error: 'amount (USD) required' }); return; }
+
+    let units: bigint;   // USDC is 6dp
+    try { units = ethers.parseUnits(String(amount), 6); } catch { res.status(400).json({ error: 'Invalid amount' }); return; }
+    if (units <= 0n) { res.status(400).json({ error: 'Amount must be positive' }); return; }
+
+    const ref = String(reference ?? '').trim() || `USDC-${Date.now()}`;
+    const vaultAddr = (process.env['VAULT_CONTRACT_ADDRESS'] ?? config.contracts.vault ?? '').toLowerCase();
+
+    // Reserve the reference first (uniqueness gate), then mint the reserve.
+    let depId: string;
+    try {
+      const r = await db.query<{ id: string }>(
+        `INSERT INTO deposit_references (reference, kind, source, wallet, amount, currency)
+         VALUES ($1,'usdc_purchase','admin',$2,$3,'USDC') RETURNING id`,
+        [ref, vaultAddr, units.toString()],
+      );
+      depId = r.rows[0].id;
+    } catch (e) {
+      if ((e as { code?: string }).code === '23505') { res.status(409).json({ error: 'That reference has already been used' }); return; }
+      throw e;
+    }
+
+    const { mintTx, usdc } = await mintUsdcToVault(units);
+    await db.query(`UPDATE deposit_references SET mint_tx = $1 WHERE id = $2`, [mintTx, depId]);
+
+    res.json({ success: true, amount: String(amount), currency: 'USDC', reference: ref, usdc, mintTx });
+  } catch (err) {
+    console.error('[POST /api/admin/treasury/buy-usdc]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── Dev: set a consumer's KYC level (POC ONLY) ────────────────────────────────
+// Sets the on-chain Consumer.kycLevel (the Vault.transfer gate reads this) and
+// mirrors it into the DB so the app's KYC display matches. Hard-disabled in prod.
+// Backend holds KYC_UPDATER_ROLE. Recipient may be a 0x address or an @tag.
+router.post('/consumers/kyc-level', requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  if (config.server.env === 'production') { res.status(403).json({ error: 'Disabled in production' }); return; }
+  try {
+    const { wallet, level } = req.body as { wallet?: string; level?: number | string };
+    const lvl = Number(level);
+    if (!Number.isInteger(lvl) || lvl < 0 || lvl > 3) { res.status(400).json({ error: 'level must be 0–3' }); return; }
+    if (!wallet) { res.status(400).json({ error: 'wallet (0x or @tag) required' }); return; }
+
+    let recipient: string;
+    try { recipient = await resolveWalletOrTag(wallet); }
+    catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
+
+    if (!config.contracts.consumer || !config.backend.privateKey) { res.status(500).json({ error: 'Consumer/backend not configured' }); return; }
+    const signer   = new ethers.Wallet(config.backend.privateKey, new ethers.JsonRpcProvider(config.chain.rpcUrl));
+    const consumer = new ethers.Contract(config.contracts.consumer, ['function updateKycLevel(address wallet, uint8 newLevel)'], signer);
+    const tx       = await consumer.updateKycLevel(recipient, lvl);
+    const receipt  = await tx.wait() as ethers.TransactionReceipt;
+
+    // Mirror into the DB so /consumer/me reflects it (best-effort level→kyc_levels map).
+    await db.query(
+      `UPDATE consumers
+         SET kyc_level_id = (SELECT level_id FROM kyc_levels
+                             WHERE country_code = consumers.country_code AND level_name LIKE $2 LIMIT 1),
+             updated_at = NOW()
+       WHERE LOWER(wallet_address) = LOWER($1)`,
+      [recipient, `Level ${lvl}%`],
+    );
+
+    res.json({ success: true, wallet: recipient, level: lvl, txHash: receipt.hash });
+  } catch (err) {
+    console.error('[POST /api/admin/consumers/kyc-level]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── Escrow claims ─────────────────────────────────────────────────────────────
+// Sweep expired WhatsApp claims, returning their escrowed value to the senders.
+// Safe to call repeatedly (idempotent — only acts on still-pending, expired rows).
+// Intended for a scheduled cron; exposed here for manual/admin triggering.
+router.post('/claims/reclaim-expired', requireAdmin, async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const r = await reclaimExpiredClaims();
+    res.json({ success: true, ...r });
+  } catch (err) {
+    console.error('[POST /api/admin/claims/reclaim-expired]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── GET /api/admin/escrow ─────────────────────────────────────────────────────
+// Visibility over WhatsApp-escrow holdings. Value sits on-chain at the platform
+// escrow address (commingled with the owner wallet); pending_claims is the
+// breakdown. Surfaces each claim + the outstanding liability (still-pending value)
+// per currency. requireAdmin via the router-level guard (not a public read).
+router.get('/escrow', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const dec  = (cur: string) => (cur.toUpperCase() === 'USDC' || cur.toUpperCase() === 'USD' ? 6 : 2);
+    const fmt  = (raw: string, cur: string) => ethers.formatUnits(BigInt(raw), dec(cur));
+    // Mask the beneficiary phone for the ops view (keep prefix + last 2 digits).
+    const mask = (p: string) => {
+      const s = String(p ?? '');
+      if (s.length <= 5) return s;
+      return `${s.slice(0, 3)}••••${s.slice(-2)}`;
+    };
+
+    const rows = (await db.query<{
+      id: string; sender_wallet: string; recipient_phone: string; amount: string;
+      currency: string; status: string; escrow_tx: string | null; release_tx: string | null;
+      expires_at: string; created_at: string;
+    }>(
+      `SELECT id, sender_wallet, recipient_phone, amount, currency, status,
+              escrow_tx, release_tx, expires_at, created_at
+         FROM pending_claims
+        ORDER BY created_at DESC
+        LIMIT 200`,
+    )).rows;
+
+    const claims = rows.map(r => ({
+      id: r.id,
+      sender: `${r.sender_wallet.slice(0, 6)}…${r.sender_wallet.slice(-4)}`,
+      recipientMasked: mask(r.recipient_phone),
+      amount: fmt(r.amount, r.currency),
+      currency: r.currency.toUpperCase() === 'USDC' ? 'USD' : r.currency.toUpperCase(),
+      status: r.status,
+      escrowTx: r.escrow_tx,
+      releaseTx: r.release_tx,
+      expiresAt: r.expires_at,
+      createdAt: r.created_at,
+      expired: r.status === 'pending' && new Date(r.expires_at).getTime() < Date.now(),
+    }));
+
+    // Outstanding liability = still-pending value, summed per currency (raw units).
+    const totalsRaw: Record<string, bigint> = {};
+    for (const r of rows) {
+      if (r.status !== 'pending') continue;
+      const c = r.currency.toUpperCase() === 'USDC' ? 'USD' : r.currency.toUpperCase();
+      totalsRaw[c] = (totalsRaw[c] ?? 0n) + BigInt(r.amount);
+    }
+    const outstanding = Object.entries(totalsRaw).map(([currency, raw]) => ({
+      currency, amount: ethers.formatUnits(raw, currency === 'USD' ? 6 : 2),
+    }));
+
+    res.json({
+      escrowAddress: process.env['ESCROW_ADDRESS'] ?? config.platform?.escrowAddress ?? null,
+      counts: {
+        pending:   rows.filter(r => r.status === 'pending').length,
+        claimed:   rows.filter(r => r.status === 'claimed').length,
+        reclaimed: rows.filter(r => r.status === 'reclaimed').length,
+      },
+      outstanding,
+      claims,
+    });
+  } catch (err) {
+    console.error('[GET /api/admin/escrow]', err);
     res.status(500).json({ error: (err as Error).message });
   }
 });

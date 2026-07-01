@@ -28,8 +28,9 @@ contract Vault is
     using SafeERC20 for IERC20;
 
     /// @notice Implementation version. Bump on every upgrade (constant, in bytecode).
-    /// 1.1.0 — ERC-4626-style share ledger + yield harvesting via price-per-share.
-    string public constant VERSION = "1.1.0";
+    /// 1.2.0 — P2P transfer gate accepts any REGISTERED consumer (Level 0+), not
+    ///         only KYC level >= 1; tier limits are enforced off-chain for now.
+    string public constant VERSION = "1.2.0";
 
     /// @notice Basis-points denominator (100% = 10_000).
     uint16 public constant BPS_DENOMINATOR = 10_000;
@@ -52,6 +53,7 @@ contract Vault is
     error InsufficientBalance(address user, bytes32 currency, uint256 have, uint256 need);
     error InsufficientVaultTokenBalance(address token, uint256 have, uint256 need);
     error KycLevelInsufficient(address user, uint8 have, uint8 need);
+    error NotRegisteredParty(address account);
     error RemittanceLocked(address user);
     error RemittanceNotLocked(address user);
     error TokenAlreadyRegistered(address token);
@@ -306,21 +308,16 @@ contract Vault is
         if (bal < amount) revert InsufficientBalance(from, currencyCode, bal, amount);
 
         // Compliance: Vault balances (unified / tradeable / USD) MAY cross borders
-        // — unlike the country-specific TreasuryToken — but every party must be
-        // verified. Each side must be EITHER a KYC'd consumer (level >= 1) OR a
-        // trusted counterparty (merchant / platform treasury — KYB-verified, so a
-        // consumer can pay a merchant without the merchant being a consumer).
-        // getKycLevel returns 0 for unregistered wallets, so a non-consumer that is
-        // not trusted is rejected. Enforced only when a Consumer is set.
+        // — unlike the country-specific TreasuryToken — but every party must be a
+        // known endpoint. Each side must be EITHER a REGISTERED consumer (any KYC
+        // level — Level 0 = name+mobile is operational; per-tier amount limits are
+        // enforced off-chain in the service layer) OR a trusted counterparty
+        // (merchant / platform treasury / escrow — KYB-verified). isRegistered is
+        // false for unknown wallets, so a non-consumer that isn't trusted is
+        // rejected. Enforced only when a Consumer is set.
         if (address(consumerContract) != address(0)) {
-            if (!trustedCounterparty[from]) {
-                uint8 fromKyc = consumerContract.getKycLevel(from);
-                if (fromKyc < 1) revert KycLevelInsufficient(from, fromKyc, 1);
-            }
-            if (!trustedCounterparty[to]) {
-                uint8 toKyc = consumerContract.getKycLevel(to);
-                if (toKyc < 1) revert KycLevelInsufficient(to, toKyc, 1);
-            }
+            if (!trustedCounterparty[from] && !consumerContract.isRegistered(from)) revert NotRegisteredParty(from);
+            if (!trustedCounterparty[to]   && !consumerContract.isRegistered(to))   revert NotRegisteredParty(to);
         }
 
         // Move shares (not assets) so totalShares/totalAssets are unchanged.

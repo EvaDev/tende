@@ -119,7 +119,7 @@ export default function Registration() {
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {saving === f.field_key && <span className="text-gray-400">Saving…</span>}
-                    {saved  === f.field_key && <span className="text-green-600">✓ Saved</span>}
+                    {saved  === f.field_key && <span className="text-brand-accent">✓ Saved</span>}
                     {locked && <span className="text-gray-400 italic">Always on</span>}
                   </td>
                 </tr>
@@ -129,7 +129,7 @@ export default function Registration() {
         </table>
       </Card>
 
-      <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800 space-y-1">
+      <div className="bg-brand-accent/10 border border-brand-accent/30 rounded-xl px-4 py-3 text-sm text-brand-accent space-y-1">
         <p className="font-semibold">OTP via SMS not yet wired up</p>
         <p>Setting verification to "OTP via SMS" records the intent but the consumer flow will treat it as unverified until an SMS gateway is configured. Mobile and Full Name are marked as non-verified for now.</p>
       </div>

@@ -9,6 +9,8 @@ export default {
           bg:     'rgb(var(--color-bg) / <alpha-value>)',
           accent: 'rgb(var(--color-accent) / <alpha-value>)',
           text:   'rgb(var(--color-text) / <alpha-value>)',
+          card:   '#FFFFFF',
+          danger: '#C0392B',
         },
       },
     },

@@ -13,16 +13,18 @@ export function shortAddr(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-export function statusColor(status: string) {
+// Status badge styles — registered brand palette only (brand-accent for
+// positive/active, brand-danger for rejected, neutral gray otherwise).
+export function statusColor(status: unknown) {
   const map: Record<string, string> = {
-    PENDING: 'bg-yellow-100 text-yellow-800',
-    LEVEL_1: 'bg-blue-100 text-blue-800',
-    LEVEL_2: 'bg-indigo-100 text-indigo-800',
-    LEVEL_3: 'bg-green-100 text-green-800',
-    REJECTED: 'bg-red-100 text-red-800',
-    CONFIRMED: 'bg-green-100 text-green-800',
-    ACTIVE: 'bg-green-100 text-green-800',
-    INACTIVE: 'bg-gray-100 text-gray-600',
+    PENDING:   'bg-gray-100 text-gray-600',
+    LEVEL_1:   'bg-brand-accent/10 text-brand-accent',
+    LEVEL_2:   'bg-brand-accent/10 text-brand-accent',
+    LEVEL_3:   'bg-brand-accent/10 text-brand-accent',
+    REJECTED:  'bg-brand-danger/10 text-brand-danger',
+    CONFIRMED: 'bg-brand-accent/10 text-brand-accent',
+    ACTIVE:    'bg-brand-accent/10 text-brand-accent',
+    INACTIVE:  'bg-gray-100 text-gray-600',
   };
-  return map[status.toUpperCase()] ?? 'bg-gray-100 text-gray-600';
+  return map[String(status ?? '').toUpperCase()] ?? 'bg-gray-100 text-gray-600';
 }

@@ -42,3 +42,32 @@ export async function signAndSubmitTransfer(prepared: PreparedTransfer): Promise
     signature:         assertion.signature,
   });
 }
+
+// ── Escrow send (to a phone number, shared via WhatsApp) ──────────────────────
+
+export interface EscrowResult {
+  success: boolean;
+  txHash: string;
+  claimUrl: string;    // recipient claim landing page
+  waLink: string;      // wa.me deep-link to share to the recipient's number
+  expiresAt: string;
+  amount: string;
+  currency: string;
+}
+
+/// Step 1 — build the sender→escrow transfer for a not-yet-onboarded recipient.
+export function prepareEscrow(input: { recipientPhone: string; amount: string; currency?: string }): Promise<PreparedTransfer> {
+  return api.post<PreparedTransfer>('/consumer/transfer/escrow/prepare', input);
+}
+
+/// Step 2 — sign + relay the escrow transfer; returns the WhatsApp share link.
+export async function signAndSubmitEscrow(prepared: PreparedTransfer): Promise<EscrowResult> {
+  const assertion = await getPasskeyAssertion({ challenge: prepared.challenge, rpId: prepared.rpId });
+  return api.post<EscrowResult>('/consumer/transfer/escrow/submit', {
+    safeTxHash:        prepared.safeTxHash,
+    credentialId:      assertion.credentialId,
+    authenticatorData: assertion.authenticatorData,
+    clientDataJSON:    assertion.clientDataJSON,
+    signature:         assertion.signature,
+  });
+}

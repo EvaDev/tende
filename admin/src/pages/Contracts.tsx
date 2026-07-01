@@ -50,12 +50,12 @@ export default function Contracts() {
       <h2 className="text-xl font-semibold text-brand-accent">Contract Deployments</h2>
 
       {error === 'auth' && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="rounded-xl border border-brand-accent/30 bg-brand-accent/10 px-4 py-3 text-sm text-brand-accent">
           Admin session expired — disconnect and reconnect your wallet to reload.
         </div>
       )}
       {error === 'other' && (
-        <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <div className="rounded-xl border border-brand-danger/30 bg-brand-danger/10 px-4 py-3 text-sm text-brand-danger">
           Could not load deployments. Check the backend and RPC connection.
         </div>
       )}
@@ -77,8 +77,8 @@ export default function Contracts() {
                 <td className="px-4 py-3 font-mono text-xs text-gray-600" title={d.liveImpl ?? ''}>{short(d.liveImpl)}</td>
                 <td className="px-4 py-3">
                   {d.onChainVersion
-                    ? <Badge className="bg-green-100 text-green-800">{d.onChainVersion}</Badge>
-                    : <span className="text-xs text-amber-600">redeploy pending</span>}
+                    ? <Badge className="bg-brand-accent/10 text-brand-accent">{d.onChainVersion}</Badge>
+                    : <span className="text-xs text-brand-accent">redeploy pending</span>}
                 </td>
                 <td className="px-4 py-3 text-gray-600">{d.version ?? '—'}</td>
                 <td className="px-4 py-3 text-gray-500">

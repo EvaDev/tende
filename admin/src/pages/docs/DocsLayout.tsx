@@ -8,10 +8,12 @@ import { cn } from '@/lib/utils';
 // don't clutter the main menu. Keep content in sync with the Solidity sources.
 const SUB_NAV = [
   { to: 'concepts',  label: 'Concepts' },
+  { to: 'payments',  label: 'Payments' },
   { to: 'gas-fees',  label: 'Gas fees' },
   { to: 'contracts', label: 'Contracts' },
   { to: 'functions', label: 'Functions' },
   { to: 'events',    label: 'Events & Reporting' },
+  { to: 'api',       label: 'API' },
 ];
 
 export default function DocsLayout() {

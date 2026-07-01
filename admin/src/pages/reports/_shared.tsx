@@ -24,7 +24,7 @@ export function useReport<T>(path: string): { data: T | null; loading: boolean; 
 // Status line shown above each report.
 export function ReportState({ loading, error, empty }: { loading: boolean; error: string | null; empty?: boolean }) {
   if (loading) return <p className="text-sm text-gray-400">Loading…</p>;
-  if (error)   return <p className="text-sm text-red-600">{error}</p>;
+  if (error)   return <p className="text-sm text-brand-danger">{error}</p>;
   if (empty)   return <p className="text-sm text-gray-500 italic">No data yet.</p>;
   return null;
 }

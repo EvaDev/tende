@@ -4,21 +4,26 @@ import { useAccount } from 'wagmi';
 import MerchantSignup from '@/pages/MerchantSignup';
 import {
   LayoutDashboard, Store, Package, Globe, Coins,
-  Users, Landmark, Zap, Settings, ScrollText, ClipboardList, Info, Boxes, Gem, BookOpen, BarChart3,
+  Users, Landmark, Zap, Settings, ScrollText, ClipboardList, Info, Boxes, Gem, BookOpen, BarChart3, UserCog, ShieldCheck, ScanLine,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppConfig, useAppName } from '@/hooks/useAppConfig';
+import { useAppName } from '@/hooks/useAppConfig';
 import { useRole } from '@/hooks/useRole';
+import { useMerchant } from '@/hooks/useMerchant';
 import { useDetectedCountry, flagEmoji } from '@/hooks/useDetectedCountry';
+import logoUrl from '@/assets/iMali_icon.png';
 
 const NAV = [
   { to: '/',           label: 'Dashboard',  icon: LayoutDashboard },
+  { to: '/my-business', label: 'My Business', icon: UserCog, merchantOnly: true },
+  { to: '/pos',         label: 'Point of Sale', icon: ScanLine, merchantOnly: true },
   { to: '/merchants',  label: 'Merchants',  icon: Store },
   { to: '/products',   label: 'Products',   icon: Package },
   { to: '/consumers',  label: 'Consumers',  icon: Users },
   { to: '/countries',  label: 'Countries',  icon: Globe },
   { to: '/currencies', label: 'Currencies', icon: Coins },
   { to: '/treasury',   label: 'Treasury',   icon: Landmark, adminOnly: true },
+  { to: '/escrow',     label: 'Escrow',     icon: ShieldCheck, adminOnly: true },
   { to: '/paymaster',     label: 'Paymaster',     icon: Zap, adminOnly: true },
   { to: '/registration',  label: 'Registration',  icon: ClipboardList, adminOnly: true },
   { to: '/settings',      label: 'Settings',      icon: Settings },
@@ -37,9 +42,9 @@ const NETWORKS: Record<number, { label: string; testnet: boolean }> = {
 
 export default function Layout() {
   const { isConnected, address, chainId, chain } = useAccount();
-  const appConfig = useAppConfig();
   const appName = useAppName();
   const { role, resolved, error } = useRole();
+  const { merchant } = useMerchant(role === 'merchant');
   const { country } = useDetectedCountry();
 
   const net = chainId ? (NETWORKS[chainId] ?? { label: chain?.name ?? `Chain ${chainId}`, testnet: true }) : null;
@@ -56,9 +61,7 @@ export default function Layout() {
       {/* Sidebar */}
       <aside className="w-56 flex-shrink-0 bg-brand-accent text-white flex flex-col">
         <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3">
-          {appConfig['app.logo'] && (
-            <img src={appConfig['app.logo']} alt="logo" className="w-9 h-9 rounded-lg object-contain bg-white/10 p-0.5" />
-          )}
+          <img src={logoUrl} alt={appName} className="w-9 h-9 object-contain flex-shrink-0" />
           <div className="flex-1">
             <span className="text-xl font-bold tracking-tight">{appName}</span>
             <span className="block text-xs text-white/50">Admin Console</span>
@@ -72,7 +75,9 @@ export default function Layout() {
 
         <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
           {/* New wallets onboarding as a merchant don't get the nav until registered. */}
-          {!needsSignup && NAV.filter(item => !item.adminOnly || role === 'admin').map(({ to, label, icon: Icon }) => (
+          {!needsSignup && NAV
+            .filter(item => (!item.adminOnly || role === 'admin') && (!('merchantOnly' in item) || role === 'merchant'))
+            .map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -96,10 +101,24 @@ export default function Layout() {
         <div className="px-4 py-4 border-t border-white/10 space-y-2">
           {isConnected && net && (
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium border ${
-              net.testnet ? 'bg-amber-400/15 text-amber-200 border-amber-400/40' : 'bg-emerald-400/15 text-emerald-200 border-emerald-400/40'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${net.testnet ? 'bg-amber-300' : 'bg-emerald-300'}`} />
+              'bg-white/10 text-white/80 border-white/25'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${net.testnet ? 'bg-white/50' : 'bg-white/90'}`} />
               {net.label}
             </span>
+          )}
+          {isConnected && role === 'merchant' && merchant && (
+            <div className="flex items-center gap-2 mb-1">
+              {merchant.icon_id != null && (
+                <img
+                  src={`/api/admin/icons/${merchant.icon_id}/image`}
+                  alt=""
+                  className="w-6 h-6 rounded object-contain bg-white/10 p-0.5 flex-shrink-0"
+                />
+              )}
+              <span className="text-sm font-semibold text-white truncate" title={merchant.name}>
+                {merchant.name}
+              </span>
+            </div>
           )}
           {isConnected && role !== 'none' && (
             <span className="block text-xs font-medium text-white/60 uppercase tracking-wide mb-1">
@@ -135,15 +154,15 @@ export default function Layout() {
               <div className="w-8 h-8 border-2 border-white/40 border-t-white rounded-full animate-spin" />
             </div>
           ) : backendDown ? (
-            <div className="max-w-md mx-auto mt-20 rounded-xl border border-red-300 bg-red-50 p-6 text-center">
-              <h3 className="text-lg font-semibold text-red-800">Can’t reach the server</h3>
-              <p className="text-sm text-red-700 mt-2">
+            <div className="max-w-md mx-auto mt-20 rounded-xl border border-brand-danger/30 bg-brand-danger/10 p-6 text-center">
+              <h3 className="text-lg font-semibold text-brand-danger">Can’t reach the server</h3>
+              <p className="text-sm text-brand-danger/80 mt-2">
                 The backend isn’t responding, so your role couldn’t be confirmed. This is a
                 server/database issue — not your wallet. Check the API is running, then retry.
               </p>
               <button
                 onClick={() => window.location.reload()}
-                className="mt-4 px-4 py-2 text-sm rounded-lg bg-red-700 text-white font-medium hover:bg-red-800"
+                className="mt-4 px-4 py-2 text-sm rounded-lg bg-brand-danger text-white font-medium hover:opacity-90"
               >
                 Retry
               </button>

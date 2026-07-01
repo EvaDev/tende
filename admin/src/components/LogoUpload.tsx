@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface Props {
   currentSrc?: string;          // existing data URI or img src
@@ -12,6 +12,10 @@ export function LogoUpload({ currentSrc, onUpload, size = 80, label = 'Logo' }: 
   const [preview, setPreview] = useState<string | undefined>(currentSrc);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+
+  // Sync the preview when the parent supplies/changes currentSrc (e.g. an existing
+  // logo loaded async after mount) — otherwise the saved logo never shows on return.
+  useEffect(() => { setPreview(currentSrc); }, [currentSrc]);
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -60,7 +64,7 @@ export function LogoUpload({ currentSrc, onUpload, size = 80, label = 'Logo' }: 
       <div className="text-xs space-y-1">
         <p className="text-gray-500">{label}</p>
         <p className="text-gray-400">PNG, JPG, SVG · max 500 KB</p>
-        {error && <p className="text-red-500">{error}</p>}
+        {error && <p className="text-brand-danger">{error}</p>}
         {preview && !uploading && (
           <button type="button" onClick={() => inputRef.current?.click()} className="text-brand-accent hover:underline">
             Change

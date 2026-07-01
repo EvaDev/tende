@@ -17,10 +17,10 @@ interface Asset {
 }
 
 const CLASS_COLORS: Record<string, string> = {
-  COMMODITY:  'bg-amber-100 text-amber-800',
-  EQUITY:     'bg-blue-100 text-blue-800',
-  CRYPTO:     'bg-purple-100 text-purple-800',
-  STABLECOIN: 'bg-green-100 text-green-800',
+  COMMODITY:  'bg-brand-accent/10 text-brand-accent',
+  EQUITY:     'bg-brand-accent/10 text-brand-accent',
+  CRYPTO:     'bg-brand-accent/10 text-brand-accent',
+  STABLECOIN: 'bg-brand-accent/10 text-brand-accent',
 };
 const FEE_LABEL: Record<number, string> = { 100: '0.01%', 500: '0.05%', 3000: '0.3%', 10000: '1%' };
 
@@ -99,8 +99,8 @@ export default function Assets() {
         <Button size="sm" onClick={() => setAdding(v => !v)}>{adding ? 'Cancel' : '+ List Asset'}</Button>
       </div>
 
-      {error === 'auth' && <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">Admin session expired — reconnect your wallet.</div>}
-      {error === 'other' && <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">Could not load assets.</div>}
+      {error === 'auth' && <div className="rounded-xl border border-brand-accent/30 bg-brand-accent/10 px-4 py-3 text-sm text-brand-accent">Admin session expired — reconnect your wallet.</div>}
+      {error === 'other' && <div className="rounded-xl border border-brand-danger/30 bg-brand-danger/10 px-4 py-3 text-sm text-brand-danger">Could not load assets.</div>}
 
       {adding && (
         <Card className="space-y-4">
@@ -138,7 +138,7 @@ export default function Assets() {
             </div>
             <div><Label>Markup (bps)</Label><Input type="number" value={form.markup_bps} onChange={f('markup_bps')} /></div>
           </div>
-          {formErr && <p className="text-sm text-red-600">{formErr}</p>}
+          {formErr && <p className="text-sm text-brand-danger">{formErr}</p>}
           <Button onClick={create} disabled={busy || !form.symbol}>Add (disabled until enabled)</Button>
         </Card>
       )}

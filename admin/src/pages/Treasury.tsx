@@ -4,13 +4,9 @@ import { Button } from '@/components/ui/button';
 import { apiFetch, api } from '@/lib/api';
 import { useRole } from '@/hooks/useRole';
 
+interface SupplyRow { token: string; label: string; address: string; decimals: number; supply: string; kind: 'treasury' | 'vault'; }
 interface TreasuryInfo {
-  ttza_balance: string;
-  ttzw_balance: string;
-  vault_usdc: string;
-  ttza_address: string;
-  ttzw_address: string;
-  vault_address: string;
+  supplies: SupplyRow[];
   dev_tools?: boolean;
 }
 
@@ -83,7 +79,7 @@ function HarvestPanel() {
                   Harvestable: {st.loading ? '…' : st.harvestable != null ? fmtUnits(st.harvestable, decimals) : '—'}
                 </p>
                 {st.message && (
-                  <p className={`text-xs mt-1 ${st.error ? 'text-red-600' : 'text-emerald-600'}`}>{st.message}</p>
+                  <p className={`text-xs mt-1 ${st.error ? 'text-brand-danger' : 'text-brand-accent'}`}>{st.message}</p>
                 )}
               </div>
               <Button size="sm" disabled={st.busy || !has} onClick={() => harvest(code)}>
@@ -103,16 +99,19 @@ function HarvestPanel() {
 function DevCashInPanel({ onDone }: { onDone: () => void }) {
   const [to, setTo]         = useState('');
   const [amount, setAmount] = useState('');
+  const [ref, setRef]       = useState('');
   const [busy, setBusy]     = useState(false);
   const [msg, setMsg]       = useState('');
+  const [tx, setTx]         = useState('');
   const [err, setErr]       = useState(false);
 
   async function submit() {
-    setBusy(true); setMsg(''); setErr(false);
+    setBusy(true); setMsg(''); setTx(''); setErr(false);
     try {
-      const r = await api.post<{ creditTx: string }>('/api/admin/treasury/dev-credit', { to: to.trim(), amount });
-      setMsg(`Credited R${parseFloat(amount).toFixed(2)} ZAR — tx ${r.creditTx.slice(0, 10)}…`);
-      setTo(''); setAmount('');
+      const r = await api.post<{ creditTx: string; reference: string }>('/api/admin/treasury/dev-credit', { to: to.trim(), amount, reference: ref.trim() });
+      setMsg(`Credited R${parseFloat(amount).toFixed(2)} ZAR to ${to.trim()} (ref ${r.reference})`);
+      setTx(r.creditTx);
+      setAmount(''); setRef('');
       onDone();
     } catch (e) {
       setErr(true); setMsg((e as Error).message);
@@ -126,12 +125,11 @@ function DevCashInPanel({ onDone }: { onDone: () => void }) {
       <CardHeader><CardTitle>Dev Cash-In <span className="text-xs font-normal text-gray-400">· POC only — disabled in production</span></CardTitle></CardHeader>
       <p className="text-sm text-gray-600 mb-3">
         Simulate a fiat deposit (Sepolia has no real cash-in rail): mints TTZA backing into the Vault and
-        credits the recipient’s spendable ZAR balance. The recipient must be a registered consumer wallet
-        with KYC level ≥ 1 to then send via the app.
+        credits the recipient’s spendable ZAR balance.
       </p>
       <div className="flex flex-col sm:flex-row gap-2">
         <input
-          value={to} onChange={e => setTo(e.target.value)} placeholder="Recipient wallet (0x…)"
+          value={to} onChange={e => setTo(e.target.value)} placeholder="Recipient: 0x… or tag (e.g. es1)"
           className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
         />
         <input
@@ -140,7 +138,115 @@ function DevCashInPanel({ onDone }: { onDone: () => void }) {
         />
         <Button onClick={submit} disabled={busy || !to || !amount}>{busy ? 'Minting…' : 'Mint & Credit'}</Button>
       </div>
-      {msg && <p className={`text-sm mt-3 ${err ? 'text-red-600' : 'text-green-700'}`}>{msg}</p>}
+      <input
+        value={ref} onChange={e => setRef(e.target.value)} placeholder="Bank deposit reference (optional — auto-generated if blank)"
+        className="w-full mt-2 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+      />
+      {msg && (
+        <p className={`text-sm mt-3 ${err ? 'text-brand-danger' : 'text-brand-accent'}`}>
+          {msg}
+          {tx && <> — <a href={`https://sepolia.etherscan.io/tx/${tx}`} target="_blank" rel="noreferrer" className="underline">view on Etherscan</a></>}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+// POC-only: simulate the platform buying USDC reserves (mints mock USDC into the Vault).
+function DevBuyUsdcPanel({ onDone }: { onDone: () => void }) {
+  const [amount, setAmount] = useState('');
+  const [ref, setRef]       = useState('');
+  const [busy, setBusy]     = useState(false);
+  const [msg, setMsg]       = useState('');
+  const [tx, setTx]         = useState('');
+  const [err, setErr]       = useState(false);
+
+  async function submit() {
+    setBusy(true); setMsg(''); setTx(''); setErr(false);
+    try {
+      const r = await api.post<{ mintTx: string; reference: string }>('/api/admin/treasury/buy-usdc', { amount, reference: ref.trim() });
+      setMsg(`Added $${parseFloat(amount).toFixed(2)} USDC to the Vault reserve (ref ${r.reference})`);
+      setTx(r.mintTx);
+      setAmount(''); setRef('');
+      onDone();
+    } catch (e) {
+      setErr(true); setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Simulate USDC Purchase <span className="text-xs font-normal text-gray-400">· POC only — disabled in production</span></CardTitle></CardHeader>
+      <p className="text-sm text-gray-600 mb-3">
+        Grow the platform’s USD reserve. On Sepolia there’s no real USDC purchase rail, so this mints the
+        Vault’s mock USDC straight into the Vault — the reserve that backs consumers’ USD balances. It appears
+        under “Underlying holdings · Vault USDC” above. On mainnet this would be a real fiat→USDC purchase.
+      </p>
+      <div className="flex flex-col sm:flex-row gap-2">
+        <input
+          value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount (USD)" inputMode="decimal"
+          className="w-full sm:w-40 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+        />
+        <input
+          value={ref} onChange={e => setRef(e.target.value)} placeholder="Purchase reference (optional — auto-generated if blank)"
+          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+        />
+        <Button onClick={submit} disabled={busy || !amount}>{busy ? 'Minting…' : 'Buy USDC'}</Button>
+      </div>
+      {msg && (
+        <p className={`text-sm mt-3 ${err ? 'text-brand-danger' : 'text-brand-accent'}`}>
+          {msg}
+          {tx && <> — <a href={`https://sepolia.etherscan.io/tx/${tx}`} target="_blank" rel="noreferrer" className="underline">view on Etherscan</a></>}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+// POC-only: set a consumer's on-chain KYC level (the Vault transfer gate reads it).
+function DevKycPanel() {
+  const [wallet, setWallet] = useState('');
+  const [level, setLevel]   = useState('1');
+  const [busy, setBusy]     = useState(false);
+  const [msg, setMsg]       = useState('');
+  const [tx, setTx]         = useState('');
+  const [err, setErr]       = useState(false);
+
+  async function submit() {
+    setBusy(true); setMsg(''); setTx(''); setErr(false);
+    try {
+      const r = await api.post<{ level: number; txHash: string }>('/api/admin/consumers/kyc-level', { wallet: wallet.trim(), level: Number(level) });
+      setMsg(`Set ${wallet.trim()} to Level ${r.level}`);
+      setTx(r.txHash);
+    } catch (e) {
+      setErr(true); setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Set KYC Level <span className="text-xs font-normal text-gray-400">· POC only — disabled in production</span></CardTitle></CardHeader>
+      <p className="text-sm text-gray-600 mb-3">
+        Set a consumer’s on-chain KYC level (the Vault transfer gate reads this). Level 1+ is required to send.
+      </p>
+      <div className="flex flex-col sm:flex-row gap-2">
+        <input value={wallet} onChange={e => setWallet(e.target.value)} placeholder="Wallet (0x…) or @tag"
+          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+        <select value={level} onChange={e => setLevel(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          {[0, 1, 2, 3].map(n => <option key={n} value={n}>Level {n}</option>)}
+        </select>
+        <Button onClick={submit} disabled={busy || !wallet}>{busy ? 'Setting…' : 'Set Level'}</Button>
+      </div>
+      {msg && (
+        <p className={`text-sm mt-3 ${err ? 'text-brand-danger' : 'text-brand-accent'}`}>
+          {msg}
+          {tx && <> — <a href={`https://sepolia.etherscan.io/tx/${tx}`} target="_blank" rel="noreferrer" className="underline">view on Etherscan</a></>}
+        </p>
+      )}
     </Card>
   );
 }
@@ -155,31 +261,60 @@ export default function Treasury() {
 
   useEffect(() => { load(); }, [load]);
 
-  const tiles = info
-    ? [
-        { label: 'TTZA Supply', value: `${(Number(info.ttza_balance) / 100).toLocaleString()} TTZA`, addr: info.ttza_address },
-        { label: 'TTZW Supply', value: `${(Number(info.ttzw_balance) / 100).toLocaleString()} TTZW`, addr: info.ttzw_address },
-        { label: 'Vault USDC',  value: `${(Number(info.vault_usdc) / 1e6).toLocaleString()} USDC`, addr: info.vault_address },
-      ]
-    : [];
+  const fmtSupply = (raw: string, decimals: number) =>
+    (Number(raw) / 10 ** decimals).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-semibold text-brand-accent">Treasury</h2>
       {!info && <p className="text-gray-400 text-sm">Loading…</p>}
-      <div className="grid grid-cols-3 gap-4">
-        {tiles.map(({ label, value, addr }) => (
-          <Card key={label}>
-            <CardHeader><CardTitle className="text-xs uppercase tracking-wide text-gray-400">{label}</CardTitle></CardHeader>
-            <p className="text-2xl font-bold text-brand-accent">{value}</p>
-            <p className="font-mono text-xs text-gray-400 mt-2 break-all">{addr}</p>
-          </Card>
-        ))}
-      </div>
+
+      {/* Data-driven supply table — new tokens appear automatically. Minted = the
+          closed-loop treasury tokens we issue; Holdings = assets the platform owns
+          in the Vault (the reserve's underlying). */}
+      <Card>
+        <CardHeader><CardTitle>Token Supply &amp; Holdings</CardTitle></CardHeader>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-gray-400">
+              <tr className="text-left">
+                <th className="font-medium pb-2">Asset</th>
+                <th className="font-medium pb-2 text-right">Minted supply</th>
+                <th className="font-medium pb-2 text-right">Underlying holdings</th>
+                <th className="font-medium pb-2 pl-6">Contract</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(info?.supplies ?? []).map((s) => {
+                const amount = `${fmtSupply(s.supply, s.decimals)} ${s.token}`;
+                return (
+                  <tr key={s.token} className="border-t border-gray-100">
+                    <td className="py-2 font-medium text-gray-900">
+                      {s.token}
+                      <span className="ml-2 text-[10px] uppercase tracking-wide text-gray-400">{s.kind === 'treasury' ? 'treasury token' : 'vault holding'}</span>
+                    </td>
+                    <td className="py-2 text-right font-bold text-brand-accent">{s.kind === 'treasury' ? amount : '—'}</td>
+                    <td className="py-2 text-right font-bold text-brand-accent">{s.kind === 'vault' ? amount : '—'}</td>
+                    <td className="py-2 pl-6 font-mono text-xs text-gray-400 break-all">
+                      {s.address ? (
+                        <a href={`https://sepolia.etherscan.io/address/${s.address}`} target="_blank" rel="noreferrer" className="hover:text-brand-accent underline">{s.address}</a>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
       {isAdmin && <HarvestPanel />}
 
       {isAdmin && info?.dev_tools && <DevCashInPanel onDone={load} />}
+
+      {isAdmin && info?.dev_tools && <DevBuyUsdcPanel onDone={load} />}
+
+      {isAdmin && info?.dev_tools && <DevKycPanel />}
     </div>
   );
 }

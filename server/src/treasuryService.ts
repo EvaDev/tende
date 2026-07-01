@@ -83,6 +83,42 @@ export async function vaultAdminDebit(wallet: string, amount: bigint, currency: 
   const r = await tx.wait() as ethers.TransactionReceipt; return r.hash;
 }
 
+// ── POC / dev only: simulate the platform acquiring USDC reserves ──────────────
+// On Sepolia there is no real USDC purchase rail and no Uniswap liquidity, so this
+// mints the Vault's configured USDC (a mock token with an open mint) straight into
+// the Vault — i.e. grows the platform's USD reserve that backs consumers' USD
+// claims. Returns the mint tx + the USDC token address used (vault.usdcToken(), so
+// it always matches what the Treasury page reads as "Underlying holdings").
+const MOCK_MINT_ABI  = ['function mint(address to, uint256 amount)'];
+const VAULT_USDC_ABI = ['function usdcToken() view returns (address)'];
+
+export async function mintUsdcToVault(amount: bigint): Promise<{ mintTx: string; usdc: string }> {
+  if (!config.contracts.vault)    throw new Error('No vault address configured');
+  if (!config.backend.privateKey) throw new Error('No backend signer configured');
+  const signer = new ethers.Wallet(config.backend.privateKey, new ethers.JsonRpcProvider(config.chain.rpcUrl));
+  const vault  = new ethers.Contract(config.contracts.vault, VAULT_USDC_ABI, signer);
+  const usdc   = await vault.usdcToken() as string;
+  if (!usdc || /^0x0+$/.test(usdc)) throw new Error('Vault has no USDC token configured');
+  const token  = new ethers.Contract(usdc, MOCK_MINT_ABI, signer);
+  const tx     = await token.mint(config.contracts.vault, amount);
+  const r      = await tx.wait() as ethers.TransactionReceipt;
+  return { mintTx: r.hash, usdc };
+}
+
+// The platform's USD reserve = the USDC the Vault actually holds (backs consumers'
+// USD claims). Used to gate ZAR→USD conversions so we never credit more USD claims
+// than there is reserve to honour.
+const ERC20_BAL_ABI = ['function balanceOf(address) view returns (uint256)'];
+export async function usdcReserveUnits(): Promise<bigint> {
+  if (!config.contracts.vault) return 0n;
+  const provider = new ethers.JsonRpcProvider(config.chain.rpcUrl);
+  const vault    = new ethers.Contract(config.contracts.vault, VAULT_USDC_ABI, provider);
+  const usdc     = await vault.usdcToken() as string;
+  if (!usdc || /^0x0+$/.test(usdc)) return 0n;
+  const token = new ethers.Contract(usdc, ERC20_BAL_ABI, provider);
+  return await token.balanceOf(config.contracts.vault) as bigint;
+}
+
 export interface WhitelistResult {
   whitelisted: boolean;   // true only when the on-chain entry is confirmed set
   txHash?: string;        // present when a transaction was sent

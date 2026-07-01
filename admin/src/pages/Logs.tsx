@@ -3,19 +3,19 @@ import { cn } from '@/lib/utils';
 
 interface LogEntry { ts: string; level: string; source?: string; msg: string }
 
+// On the dark console: neutral grays/white for info/warn, brand-danger for error.
 const LEVEL_COLOR: Record<string, string> = {
   info:  'text-gray-300',
-  warn:  'text-yellow-400',
-  error: 'text-red-400',
+  warn:  'text-white',
+  error: 'text-brand-danger',
 };
 
-// Source chip colours. 'server' is the backend; admin/consumer arrive via
-// POST /api/client-log (client error reporting).
+// Source chips — neutral on the dark console; the chip text names the source.
 const SOURCE_COLOR: Record<string, string> = {
-  server:   'bg-emerald-500/15 text-emerald-300',
-  admin:    'bg-cyan-500/15 text-cyan-300',
-  consumer: 'bg-fuchsia-500/15 text-fuchsia-300',
-  client:   'bg-gray-500/20 text-gray-300',
+  server:   'bg-white/10 text-white/70',
+  admin:    'bg-white/10 text-white/70',
+  consumer: 'bg-white/10 text-white/70',
+  client:   'bg-white/10 text-white/70',
 };
 
 export default function Logs() {
@@ -60,7 +60,7 @@ export default function Logs() {
             onClick={() => setPaused(v => !v)}
             className={cn(
               'px-3 py-1.5 text-xs rounded font-medium',
-              paused ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700',
+              paused ? 'bg-brand-accent text-white' : 'bg-gray-200 text-gray-700',
             )}
           >
             {paused ? 'Resume' : 'Pause'}

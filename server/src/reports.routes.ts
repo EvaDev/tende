@@ -84,4 +84,65 @@ router.get('/revenue', requireAdmin, async (_req: Request, res: Response): Promi
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });
 
+// GET /api/admin/reports/conversion-fees — platform revenue from FX conversions (the
+// spread). The fee is retained in the reserve (the consumer is credited the
+// post-spread amount); it's recorded per-conversion in consumer_conversions.
+router.get('/conversion-fees', requireAdmin, async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const r = await db.query<{ fee_currency: string; total_fee: string; total_from: string; conversions: number }>(
+      `SELECT fee_currency,
+              SUM(fee_amount)::numeric  AS total_fee,
+              SUM(from_amount)::numeric AS total_from,
+              count(*)::int             AS conversions
+         FROM consumer_conversions GROUP BY fee_currency`);
+    // fee_currency is ZAR (2dp minor units) for now — convert to major units for display.
+    res.json(r.rows.map(x => ({
+      feeCurrency:    x.fee_currency,
+      conversions:    x.conversions,
+      totalFee:       (Number(x.total_fee)  / 100).toFixed(2),
+      totalConverted: (Number(x.total_from) / 100).toFixed(2),
+    })));
+  } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+});
+
+// GET /api/admin/reports/treasury — minting/burning of treasury tokens + asset
+// purchases, each linked to its off-chain deposit reference (voucher / bank ref).
+router.get('/treasury', requireAdmin, async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const evs = await db.query<{ block_time: string; tx_hash: string; event_name: string; args: Record<string, string> }>(
+      `SELECT block_time, tx_hash, event_name, args
+         FROM chain_events
+        WHERE event_name IN ('Minted','Burned','UsdPurchased')
+        ORDER BY block_number DESC, log_index DESC LIMIT 500`);
+
+    // Off-chain references, keyed by the mint tx they back.
+    const refs = await db.query<{ mint_tx: string; reference: string; kind: string; source: string }>(
+      `SELECT lower(mint_tx) AS mint_tx, reference, kind, source FROM deposit_references WHERE mint_tx IS NOT NULL`);
+    const refByTx: Record<string, { reference: string; kind: string; source: string }> = {};
+    for (const r of refs.rows) refByTx[r.mint_tx] = { reference: r.reference, kind: r.kind, source: r.source };
+
+    const events = evs.rows.map((e) => {
+      const a = e.args ?? {};
+      if (e.event_name === 'UsdPurchased') {
+        return { type: 'Asset purchase', token: 'USDC', decimals: 6, amount: a.usdcReceived ?? '0',
+                 spent: a.localAmount ?? '0', spentCurrency: decodeCurrency(a.localCurrency), spentDecimals: 2,
+                 party: a.buyer ?? '', reference: null, refKind: null, refSource: null,
+                 txHash: e.tx_hash, blockTime: e.block_time };
+      }
+      const ref = refByTx[String(e.tx_hash).toLowerCase()];
+      return { type: e.event_name, token: 'TTZA', decimals: 2, amount: a.amount ?? '0',
+               party: a.to ?? a.from ?? '', reference: ref?.reference ?? null, refKind: ref?.kind ?? null,
+               refSource: ref?.source ?? null, txHash: e.tx_hash, blockTime: e.block_time };
+    });
+
+    const totalsRows = await db.query<{ event_name: string; t: string }>(
+      `SELECT event_name, SUM((args->>'amount')::numeric)::text t
+         FROM chain_events WHERE event_name IN ('Minted','Burned') GROUP BY event_name`);
+    const totals: Record<string, string> = {};
+    for (const r of totalsRows.rows) totals[r.event_name] = r.t;
+
+    res.json({ events, totals }); // totals in TTZA raw units (2dp)
+  } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+});
+
 export default router;

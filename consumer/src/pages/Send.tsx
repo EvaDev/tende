@@ -32,7 +32,7 @@ function flagEmoji(code: string): string {
 function Select({ label, options, ...props }: React.SelectHTMLAttributes<HTMLSelectElement> & { label: string; options: string[] }) {
   return (
     <div className="space-y-1">
-      <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">{label}</label>
+      <label className="block text-xs text-white uppercase tracking-wide font-medium">{label}</label>
       <select {...props} className="w-full bg-brand-card border border-brand-accent/20 rounded-xl px-4 py-3 text-sm text-brand-accent outline-none focus:ring-2 focus:ring-brand-accent">
         <option value="">Select…</option>
         {options.map(o => <option key={o} value={o}>{o}</option>)}
@@ -44,7 +44,7 @@ function Select({ label, options, ...props }: React.SelectHTMLAttributes<HTMLSel
 function Field({ label, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) {
   return (
     <div className="space-y-1">
-      <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">{label}</label>
+      <label className="block text-xs text-white uppercase tracking-wide font-medium">{label}</label>
       <input {...props} className="w-full bg-brand-card border border-brand-accent/20 rounded-xl px-4 py-3 text-sm text-brand-accent outline-none focus:ring-2 focus:ring-brand-accent placeholder-brand-accent/30" />
     </div>
   );
@@ -125,8 +125,8 @@ export default function Send() {
           <CheckCircle2 size={48} className="text-brand-accent" />
         </div>
         <div className="text-center space-y-2">
-          <h2 className="text-2xl font-bold text-brand-accent">Transfer Initiated</h2>
-          <p className="text-brand-accent/60">
+          <h2 className="text-2xl font-bold text-white">Transfer Initiated</h2>
+          <p className="text-white">
             {form.method === 'cash'
               ? 'A FlashRemit Voucher will be generated for your recipient.'
               : `Sending ${recipientReceives.toFixed(2)} ${form.currency} to ${form.recipientName}.`}
@@ -146,8 +146,8 @@ export default function Send() {
     <div className="flex flex-col min-h-dvh">
       <div className="px-6 pt-10 pb-4 space-y-4">
         <div className="flex items-center gap-4">
-          <button onClick={() => step === 'destination' ? navigate(-1) : setStep(step === 'amount' ? 'destination' : 'amount')} className="text-brand-accent/60">←</button>
-          <h2 className="text-xl font-bold text-brand-accent">
+          <button onClick={() => step === 'destination' ? navigate(-1) : setStep(step === 'amount' ? 'destination' : 'amount')} className="text-white">←</button>
+          <h2 className="text-xl font-bold text-white">
             {step === 'destination' ? 'Send Money' : step === 'amount' ? 'Amount' : 'Confirm Transfer'}
           </h2>
         </div>
@@ -168,7 +168,7 @@ export default function Send() {
         {step === 'destination' && (
           <>
             <div className="space-y-1">
-              <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">Destination Country</label>
+              <label className="block text-xs text-white uppercase tracking-wide font-medium">Destination Country</label>
               <div className="flex flex-wrap gap-2">
                 {corridors.filter(c => c.status !== 'coming_soon').map(c => {
                   const active = c.status === 'active';
@@ -189,14 +189,14 @@ export default function Send() {
                 })}
               </div>
               {corridors.some(c => c.status === 'coming_soon') && (
-                <p className="text-brand-accent/40 text-xs px-1">
+                <p className="text-white text-xs px-1">
                   {corridors.filter(c => c.status === 'coming_soon').map(c => c.receive_country_name).join(', ')} — Coming Soon
                 </p>
               )}
             </div>
 
             <div className="space-y-1">
-              <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">Recipient Receives Via</label>
+              <label className="block text-xs text-white uppercase tracking-wide font-medium">Recipient Receives Via</label>
               <div className="grid grid-cols-3 gap-2">
                 {(['bank','mobile_money','cash'] as PayoutMethod[]).map(m => (
                   <button
@@ -246,7 +246,7 @@ export default function Send() {
         {step === 'amount' && (
           <>
             <div className="space-y-1">
-              <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">Currency Recipient Receives</label>
+              <label className="block text-xs text-white uppercase tracking-wide font-medium">Currency Recipient Receives</label>
               <select
                 value={form.currency}
                 onChange={e => set('currency', e.target.value)}
@@ -257,7 +257,7 @@ export default function Send() {
               </select>
             </div>
             <div className="space-y-1">
-              <label className="block text-xs text-brand-accent/60 uppercase tracking-wide font-medium">
+              <label className="block text-xs text-white uppercase tracking-wide font-medium">
                 Amount to Send{corridor ? ` (${corridor.send_currency})` : ''}
               </label>
               <div className="relative">

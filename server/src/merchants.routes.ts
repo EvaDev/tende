@@ -17,6 +17,7 @@ import jwt from 'jsonwebtoken';
 import db      from './db.js';
 import config from './config.js';
 import { requireAdmin }  from './admin.middleware.js';
+import { requireAuth }   from './auth.middleware.js';
 import { verifyAndConsume } from './authNonce.js';
 import { registerMerchantOnchain, type MerchantOnchainResult } from './treasuryService.js';
 
@@ -53,7 +54,7 @@ async function getAcceptedCurrencies(merchantId: string): Promise<string[]> {
 // receives a merchant JWT. Country defaults from the client; the wallet is the
 // connected wallet. verification_status stays PENDING.
 router.post('/register', async (req: Request, res: Response): Promise<void> => {
-  const { walletAddress, signature, name, email, address, contactPerson, settlementType, countryCode } =
+  const { walletAddress, signature, name, email, address, contactPerson, settlementType, countryCode, iconId } =
     req.body as Record<string, string>;
 
   if (!walletAddress || !signature) { res.status(400).json({ error: 'walletAddress and signature required' }); return; }
@@ -78,10 +79,10 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
 
     const r = await db.query<{ merchant_id: string; name: string; country_code: string; verification_status: string }>(
       `INSERT INTO merchants
-         (name, country_code, currency_code, wallet_address, email, address, contact_person, settlement_type, settlement_currency, verification_status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING')
+         (name, country_code, currency_code, wallet_address, email, address, contact_person, settlement_type, settlement_currency, icon_id, verification_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PENDING')
        RETURNING merchant_id, name, country_code, verification_status`,
-      [name, countryCode.toUpperCase(), currency, wallet, email ?? null, address ?? null, contactPerson ?? null, settlementType, settlementCurrency],
+      [name, countryCode.toUpperCase(), currency, wallet, email ?? null, address ?? null, contactPerson ?? null, settlementType, settlementCurrency, iconId != null ? Number(iconId) : null],
     );
     const merchant = r.rows[0];
 
@@ -109,6 +110,196 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === '23505') { res.status(409).json({ error: 'Wallet already registered' }); return; }
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── GET /api/merchants/me ─────────────────────────────────────────────────────
+// The connected merchant's own profile (resolved by the JWT wallet). Declared
+// BEFORE GET /:id so "me" isn't swallowed as an :id.
+router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const wallet = req.consumer!.walletAddress.toLowerCase();
+    const r = await db.query(
+      `SELECT merchant_id, name, wallet_address, country_code, currency_code,
+              email, address, contact_person, settlement_type, settlement_currency,
+              icon_id, verification_status, created_at
+       FROM merchants WHERE LOWER(wallet_address) = $1`,
+      [wallet],
+    );
+    if (!r.rows.length) { res.status(404).json({ error: 'No merchant registered for this wallet' }); return; }
+    res.json(r.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── PATCH /api/merchants/me ───────────────────────────────────────────────────
+// Self-edit: a merchant updates their own details while connected to their wallet.
+router.patch('/me', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const wallet = req.consumer!.walletAddress.toLowerCase();
+    const cur = await db.query<{ merchant_id: string; currency_code: string }>(
+      `SELECT merchant_id, currency_code FROM merchants WHERE LOWER(wallet_address) = $1`, [wallet]);
+    if (!cur.rows.length) { res.status(404).json({ error: 'No merchant registered for this wallet' }); return; }
+
+    // camelCase body → column. Self-service can change profile fields only — not
+    // wallet, country, verification status, or accepted currencies.
+    const fieldMap: Record<string, string> = {
+      name: 'name', contactPerson: 'contact_person', email: 'email',
+      address: 'address', settlementType: 'settlement_type', iconId: 'icon_id',
+    };
+    const updates: Record<string, unknown> = {};
+    for (const [bodyKey, col] of Object.entries(fieldMap)) {
+      if (req.body[bodyKey] === undefined) continue;
+      let val = req.body[bodyKey];
+      if (col === 'name' && !String(val ?? '').trim()) { res.status(400).json({ error: 'Business name cannot be empty' }); return; }
+      if (col === 'settlement_type') {
+        if (!['FIAT', 'ONCHAIN'].includes(val)) { res.status(400).json({ error: 'settlementType must be FIAT or ONCHAIN' }); return; }
+        // Keep settlement_currency consistent with the chosen method.
+        updates.settlement_currency = val === 'ONCHAIN' ? 'USDC' : cur.rows[0].currency_code;
+      }
+      if (col === 'icon_id') val = val != null ? Number(val) : null;
+      updates[col] = val;
+    }
+    if (!Object.keys(updates).length) { res.status(400).json({ error: 'Nothing to update' }); return; }
+
+    const cols   = Object.keys(updates);
+    const sets   = cols.map((c, i) => `${c} = $${i + 2}`).join(', ');
+    const result = await db.query(
+      `UPDATE merchants SET ${sets}, updated_at = NOW() WHERE merchant_id = $1
+       RETURNING merchant_id, name, wallet_address, country_code, currency_code,
+                 email, address, contact_person, settlement_type, settlement_currency,
+                 icon_id, verification_status, created_at`,
+      [cur.rows[0].merchant_id, ...cols.map(c => updates[c])],
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── Merchant self logo (by connected wallet) ──────────────────────────────────
+// The merchant owns their logo — admins can't set it. Declared before /:id.
+async function merchantIdForWallet(wallet: string): Promise<string | null> {
+  const r = await db.query<{ merchant_id: string }>(
+    `SELECT merchant_id FROM merchants WHERE LOWER(wallet_address) = $1`, [wallet.toLowerCase()]);
+  return r.rows[0]?.merchant_id ?? null;
+}
+
+router.get('/me/logo', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = await merchantIdForWallet(req.consumer!.walletAddress);
+    if (!id) { res.status(404).json({ error: 'No merchant for this wallet' }); return; }
+    const r = await db.query(`SELECT mime_type, data_base64 FROM merchant_logos WHERE merchant_id = $1`, [id]);
+    if (!r.rows.length) { res.status(404).json({ error: 'No logo' }); return; }
+    const { mime_type, data_base64 } = r.rows[0] as { mime_type: string; data_base64: string };
+    const buf = Buffer.from(data_base64.replace(/^data:[^;]+;base64,/, ''), 'base64');
+    res.setHeader('Content-Type', mime_type);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.end(buf);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.put('/me/logo', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = await merchantIdForWallet(req.consumer!.walletAddress);
+    if (!id) { res.status(404).json({ error: 'No merchant for this wallet' }); return; }
+    const { data_base64, mime_type } = req.body as { data_base64?: string; mime_type?: string };
+    if (!data_base64) { res.status(400).json({ error: 'data_base64 required' }); return; }
+    const mime = mime_type ?? data_base64.match(/^data:([^;]+);/)?.[1] ?? 'image/png';
+    await db.query(
+      `INSERT INTO merchant_logos (merchant_id, mime_type, data_base64)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (merchant_id) DO UPDATE SET mime_type=$2, data_base64=$3, updated_at=NOW()`,
+      [id, mime, data_base64],
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── Merchant self products (by connected wallet) ──────────────────────────────
+// The merchant manages their OWN product catalog (used by the Point of Sale).
+// A "cash-out" line is just a unit-price product (e.g. R1) the teller rings up by
+// quantity. Declared before /:id.
+router.get('/me/products', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = await merchantIdForWallet(req.consumer!.walletAddress);
+    if (!id) { res.status(404).json({ error: 'No merchant for this wallet' }); return; }
+    const r = await db.query(
+      `SELECT product_id AS id, name, price, currency_code, icon_id, is_active
+         FROM products WHERE merchant_id = $1
+        ORDER BY created_at DESC`,
+      [id],
+    );
+    res.json(r.rows);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/me/products', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const m = await db.query<{ merchant_id: string; country_code: string; currency_code: string }>(
+      `SELECT merchant_id, country_code, currency_code FROM merchants WHERE LOWER(wallet_address) = $1`,
+      [req.consumer!.walletAddress.toLowerCase()]);
+    if (!m.rows.length) { res.status(404).json({ error: 'No merchant for this wallet' }); return; }
+
+    const { name, unitPrice } = req.body as { name?: string; unitPrice?: number | string };
+    if (!name?.trim()) { res.status(400).json({ error: 'Product name is required' }); return; }
+    const price = Number(unitPrice);
+    if (!(price > 0)) { res.status(400).json({ error: 'Unit price must be a positive number' }); return; }
+    const cents = Math.round(price * 100);   // products store minor units (cents)
+
+    const { merchant_id, country_code, currency_code } = m.rows[0];
+    const r = await db.query(
+      `INSERT INTO products
+         (merchant_id, country_code, currency_code, name, delivery_type, is_fixed_price, price, min_price, max_price, incurs_vat, is_active)
+       VALUES ($1,$2,$3,$4,'DIRECT',TRUE,$5,$5,$5,FALSE,TRUE)
+       RETURNING product_id AS id, name, price, currency_code, is_active`,
+      [merchant_id, country_code, currency_code, name.trim(), cents],
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+// PATCH /api/merchants/me/products/:id — edit a product in the merchant's own catalog.
+router.patch('/me/products/:id', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const merchantId = await merchantIdForWallet(req.consumer!.walletAddress);
+    if (!merchantId) { res.status(404).json({ error: 'No merchant for this wallet' }); return; }
+
+    const { name, unitPrice, isActive } = req.body as { name?: string; unitPrice?: number | string; isActive?: boolean };
+    const sets: string[] = [];
+    const vals: unknown[] = [req.params.id, merchantId];
+    if (name !== undefined) {
+      if (!String(name).trim()) { res.status(400).json({ error: 'Name cannot be empty' }); return; }
+      vals.push(String(name).trim()); sets.push(`name = $${vals.length}`);
+    }
+    if (unitPrice !== undefined) {
+      const price = Number(unitPrice);
+      if (!(price > 0)) { res.status(400).json({ error: 'Unit price must be positive' }); return; }
+      const cents = Math.round(price * 100);
+      vals.push(cents); sets.push(`price = $${vals.length}, min_price = $${vals.length}, max_price = $${vals.length}`);
+    }
+    if (isActive !== undefined) { vals.push(!!isActive); sets.push(`is_active = $${vals.length}`); }
+    if (!sets.length) { res.status(400).json({ error: 'Nothing to update' }); return; }
+
+    const r = await db.query(
+      `UPDATE products SET ${sets.join(', ')}, updated_at = NOW()
+       WHERE product_id = $1 AND merchant_id = $2
+       RETURNING product_id AS id, name, price, currency_code, is_active`,
+      vals,
+    );
+    if (!r.rows.length) { res.status(404).json({ error: 'Product not found in your catalog' }); return; }
+    res.json(r.rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
   }
 });
 

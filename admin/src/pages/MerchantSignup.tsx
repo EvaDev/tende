@@ -8,6 +8,7 @@ import { setAuthToken } from '@/lib/api';
 import { refreshRole } from '@/hooks/useRole';
 import { useDetectedCountry, flagEmoji } from '@/hooks/useDetectedCountry';
 import { shortAddr } from '@/lib/utils';
+import IconPicker from '@/components/IconPicker';
 
 // Self-service merchant onboarding, shown when a new (unknown) wallet connects.
 // KYB details are collected but not verified yet (status stays PENDING).
@@ -20,6 +21,7 @@ export default function MerchantSignup() {
   const [form, setForm] = useState({
     name: '', contactPerson: '', email: '', address: '', settlementType: 'FIAT', countryCode: '',
   });
+  const [iconId, setIconId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr]   = useState('');
 
@@ -45,6 +47,7 @@ export default function MerchantSignup() {
           walletAddress: addr, signature,
           name: form.name, email: form.email, address: form.address,
           contactPerson: form.contactPerson, settlementType: form.settlementType, countryCode: form.countryCode,
+          iconId,
         }),
       });
       const body = await res.json();
@@ -61,8 +64,8 @@ export default function MerchantSignup() {
 
   return (
     <div className="max-w-2xl space-y-4">
-      <h2 className="text-xl font-semibold text-brand-accent">Become a merchant</h2>
-      <p className="text-sm text-gray-600 -mt-2">
+      <h2 className="text-xl font-semibold text-white">Become a merchant</h2>
+      <p className="text-sm text-white/80 -mt-2">
         Welcome! We don't recognise this wallet yet. Register your business below to start accepting payments.
       </p>
 
@@ -90,6 +93,11 @@ export default function MerchantSignup() {
           </div>
           <div className="col-span-2"><Label>Business Address</Label><Input value={form.address} onChange={set('address')} placeholder="Street, city, postal code" /></div>
           <div className="col-span-2">
+            <Label>Business Icon</Label>
+            <IconPicker value={iconId} onChange={setIconId} />
+            <p className="text-xs text-gray-400 mt-1">Shown to customers in the app. You can change it later.</p>
+          </div>
+          <div className="col-span-2">
             <Label>Settlement Method</Label>
             <Select value={form.settlementType} onChange={set('settlementType')}>
               <option value="FIAT">Fiat payout (local bank)</option>
@@ -101,7 +109,7 @@ export default function MerchantSignup() {
         <p className="text-xs text-gray-400">
           Identity/KYB verification is not performed at this stage — your status will be “Pending” until reviewed.
         </p>
-        {err && <p className="text-sm text-red-600">{err}</p>}
+        {err && <p className="text-sm text-brand-danger">{err}</p>}
 
         <Button onClick={submit} disabled={busy}>
           {busy ? 'Signing & registering…' : 'Register & list products'}

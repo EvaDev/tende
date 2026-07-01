@@ -37,6 +37,7 @@ import configRouter      from './config.routes.js';
 import adminRouter       from './admin.routes.js';
 import referenceRouter   from './reference.routes.js';
 import reportsRouter     from './reports.routes.js';
+import claimRouter       from './claim.routes.js';
 import { startIndexer }  from './indexerService.js';
 
 const app = express();
@@ -86,6 +87,7 @@ app.use('/api/products',  productsRouter);
 app.use('/api/config',    configRouter);
 app.use('/api/admin',         adminRouter);
 app.use('/api/admin/reports', reportsRouter);
+app.use('/api/claim',         claimRouter);
 app.use('/api',               referenceRouter);
 
 // ── Server-Sent Events log stream ─────────────────────────────────────────────

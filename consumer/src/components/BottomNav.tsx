@@ -1,11 +1,11 @@
-import { Home, Send, Clock, User } from 'lucide-react';
+import { Home, ShoppingBag, Clock, User } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 const tabs = [
-  { path: '/home',    label: 'Home',    Icon: Home  },
-  { path: '/send',    label: 'Send',    Icon: Send  },
-  { path: '/history', label: 'History', Icon: Clock },
-  { path: '/account', label: 'Account', Icon: User  },
+  { path: '/home',    label: 'Home',    Icon: Home        },
+  { path: '/buy',     label: 'Buy',     Icon: ShoppingBag },
+  { path: '/history', label: 'History', Icon: Clock       },
+  { path: '/account', label: 'Account', Icon: User        },
 ];
 
 export default function BottomNav() {

@@ -8,6 +8,7 @@ import { applyBrandColors } from '@/config/app';
 import { fmt } from '@/lib/utils';
 import { LogoUpload } from '@/components/LogoUpload';
 import { ConnectPrompt } from '@/components/ConnectPrompt';
+import { useRole } from '@/hooks/useRole';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -34,20 +35,21 @@ interface Country { code: string; name: string }
 
 // ── Toggle component ─────────────────────────────────────────────────────────
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors ${checked ? 'bg-brand-accent' : 'bg-gray-300'}`}
+      className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors ${checked ? 'bg-brand-accent' : 'bg-gray-300'} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
     >
       <span className={`inline-block h-5 w-5 mt-0.5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0.5'}`} />
     </button>
   );
 }
 
-function ToggleRow({ label, description, value, onChange }: {
-  label: string; description: string; value: boolean; onChange: (v: boolean) => void;
+function ToggleRow({ label, description, value, onChange, disabled }: {
+  label: string; description: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean;
 }) {
   return (
     <div className="flex items-start justify-between gap-6 py-4 border-b last:border-0">
@@ -56,7 +58,7 @@ function ToggleRow({ label, description, value, onChange }: {
         <p className="text-sm text-gray-500 mt-0.5">{description}</p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0 pt-0.5">
-        <Toggle checked={value} onChange={onChange} />
+        <Toggle checked={value} onChange={onChange} disabled={disabled} />
         <span className="text-sm text-gray-500 w-6">{value ? 'On' : 'Off'}</span>
       </div>
     </div>
@@ -67,6 +69,7 @@ function ToggleRow({ label, description, value, onChange }: {
 
 export default function SettingsPage() {
   const { isConnected } = useAccount();
+  const { isAdmin } = useRole();
   const [config, setConfig]       = useState<ConfigMap | null>(null);
   const [configError, setConfigError] = useState<'auth' | 'other' | null>(null);
   const [saving, setSaving]       = useState<string | null>(null);
@@ -149,12 +152,12 @@ export default function SettingsPage() {
       <div className="flex items-end gap-3">
         <div className="flex-1">
           <Label>{label}</Label>
-          <Input type={type} value={displayVal} onChange={e => {
+          <Input type={type} value={displayVal} disabled={!isAdmin} onChange={e => {
             const v = type === 'color' ? e.target.value.replace('#', '') : e.target.value;
             setConfig(c => ({ ...c, [key]: v }));
           }} />
         </div>
-        {isConnected && (
+        {isAdmin && (
           <Button size="sm" variant="outline" onClick={() => saveConfig(key, config[key] ?? '')} disabled={saving === key}>
             {saved === key ? 'Saved ✓' : saving === key ? '…' : 'Save'}
           </Button>
@@ -171,12 +174,18 @@ export default function SettingsPage() {
 
       {!isConnected && <ConnectPrompt action="save settings" />}
 
+      {isConnected && !isAdmin && (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+          Read-only — these are platform settings. Only an admin can change them.
+        </div>
+      )}
+
       {configError === 'auth' && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
-          <span className="text-amber-500 text-lg mt-0.5">⚠</span>
+        <div className="rounded-xl border border-brand-accent/30 bg-brand-accent/10 px-4 py-3 flex items-start gap-3">
+          <span className="text-brand-accent text-lg mt-0.5">⚠</span>
           <div>
-            <p className="font-semibold text-amber-800">Session expired</p>
-            <p className="text-sm text-amber-700 mt-0.5">
+            <p className="font-semibold text-brand-accent">Session expired</p>
+            <p className="text-sm text-brand-accent mt-0.5">
               Your admin session has expired. Disconnect and reconnect your wallet to load settings.
               Settings are <strong>not shown</strong> until loaded from the database — no stale values will be saved.
             </p>
@@ -185,7 +194,7 @@ export default function SettingsPage() {
       )}
 
       {configError === 'other' && (
-        <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-red-800 text-sm">
+        <div className="rounded-xl border border-brand-danger/30 bg-brand-danger/10 px-4 py-3 text-brand-danger text-sm">
           Could not load settings from the server. Check that the backend is running.
         </div>
       )}
@@ -197,18 +206,21 @@ export default function SettingsPage() {
           label="Consumer wallet allows purchases"
           description="When on, the consumer app shows the Buy Product flow (scan QR / enter product ID). When off, purchasing is disabled."
           value={config['feature.consumer.purchases'] === 'true'}
+          disabled={!isAdmin}
           onChange={() => toggleConfig('feature.consumer.purchases', config['feature.consumer.purchases'] ?? 'false')}
         />
         <ToggleRow
           label="Consumer wallet allows lending"
           description="When on, the consumer app shows the Lend & Borrow page. When off, that page is hidden."
           value={config['feature.consumer.lending'] === 'true'}
+          disabled={!isAdmin}
           onChange={() => toggleConfig('feature.consumer.lending', config['feature.consumer.lending'] ?? 'false')}
         />
         <ToggleRow
           label="Consumer wallet allows family member linking"
           description="When on, the consumer app shows the Family Members page. When off, it is hidden."
           value={config['feature.consumer.family'] === 'true'}
+          disabled={!isAdmin}
           onChange={() => toggleConfig('feature.consumer.family', config['feature.consumer.family'] ?? 'false')}
         />
       </Card>}
@@ -248,6 +260,7 @@ export default function SettingsPage() {
                           <Input
                             type="number"
                             className="w-28 h-7 text-xs"
+                            disabled={!isAdmin}
                             value={String(Math.round(Number(lv[field]) / 100))}
                             onChange={e => patchKyc(lv.level_id, field, String(Number(e.target.value) * 100))}
                           />
@@ -255,7 +268,7 @@ export default function SettingsPage() {
                       ))}
                       {(['requires_full_name','requires_mobile','requires_id_doc','requires_biometric','allows_remittance','idos_credential_required'] as const).map(field => (
                         <td key={field} className="py-2 pr-3">
-                          <Toggle checked={!!lv[field]} onChange={v => patchKyc(lv.level_id, field, v)} />
+                          <Toggle checked={!!lv[field]} disabled={!isAdmin} onChange={v => patchKyc(lv.level_id, field, v)} />
                         </td>
                       ))}
                     </tr>
@@ -263,12 +276,14 @@ export default function SettingsPage() {
                 </tbody>
               </table>
             </div>
-            <div className="mt-4 flex items-center gap-3">
-              <Button size="sm" onClick={saveKyc} disabled={kycSaving || Object.keys(kycDraft).length === 0}>
-                {kycSaved ? 'Saved ✓' : kycSaving ? 'Saving…' : 'Save Limits'}
-              </Button>
-              {Object.keys(kycDraft).length > 0 && <span className="text-xs text-amber-600">Unsaved changes</span>}
-            </div>
+            {isAdmin && (
+              <div className="mt-4 flex items-center gap-3">
+                <Button size="sm" onClick={saveKyc} disabled={kycSaving || Object.keys(kycDraft).length === 0}>
+                  {kycSaved ? 'Saved ✓' : kycSaving ? 'Saving…' : 'Save Limits'}
+                </Button>
+                {Object.keys(kycDraft).length > 0 && <span className="text-xs text-brand-accent">Unsaved changes</span>}
+              </div>
+            )}
           </>
         )}
       </Card>
@@ -276,12 +291,19 @@ export default function SettingsPage() {
       {/* ── Branding — only shown when config is loaded from DB ── */}
       {config && <Card className="space-y-4">
         <CardHeader><CardTitle>App Branding</CardTitle></CardHeader>
-        <LogoUpload
-          currentSrc={config['app.logo'] || undefined}
-          onUpload={async (uri) => saveConfig('app.logo', uri)}
-          size={96}
-          label="App Logo"
-        />
+        {isAdmin ? (
+          <LogoUpload
+            currentSrc={config['app.logo'] || undefined}
+            onUpload={async (uri) => saveConfig('app.logo', uri)}
+            size={96}
+            label="App Logo"
+          />
+        ) : config['app.logo'] ? (
+          <div>
+            <Label>App Logo</Label>
+            <img src={config['app.logo']} alt="App logo" className="w-24 h-24 rounded-xl object-contain border bg-gray-50 p-1" />
+          </div>
+        ) : null}
         {configField('app.name', 'App Name')}
         {configField('brand.color.bg', 'Background Color', 'color')}
         {configField('brand.color.accent', 'Accent Color', 'color')}

@@ -23,7 +23,7 @@ export default function Paymaster() {
       <Card>
         <CardHeader>
           <CardTitle>Pimlico Paymaster</CardTitle>
-          <Badge className={info?.mode === 'live' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>
+          <Badge className={info?.mode === 'live' ? 'bg-brand-accent/10 text-brand-accent' : 'bg-brand-accent/10 text-brand-accent'}>
             {info?.mode ?? 'loading'}
           </Badge>
         </CardHeader>
@@ -33,7 +33,7 @@ export default function Paymaster() {
           <div><dt className="text-gray-400 text-xs uppercase">Ops Sponsored</dt><dd>{info?.sponsored_ops ?? '—'}</dd></div>
         </dl>
         {info?.mode === 'stub' && (
-          <p className="mt-4 text-xs text-yellow-700 bg-yellow-50 rounded p-3">
+          <p className="mt-4 text-xs text-brand-accent bg-brand-accent/10 rounded p-3">
             Paymaster is in stub mode — user ops are not sponsored on-chain. Configure a Pimlico policy ID to activate.
           </p>
         )}

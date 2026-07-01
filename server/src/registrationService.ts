@@ -52,8 +52,19 @@ export async function resolvePasskeySigner({ pubKeyX, pubKeyY, verifiers }: {
 }): Promise<string> {
   const signer  = getAdminSigner();
   const factory = new ethers.Contract(config.safe.webAuthnSignerFactory, WEBAUTHN_SIGNER_FACTORY_ABI, signer);
-  // createSigner is idempotent — returns existing address if already created
-  return factory.createSigner(pubKeyX, pubKeyY, verifiers) as Promise<string>;
+  // getSigner is a VIEW returning the deterministic signer address. createSigner is
+  // a state-changing tx — it resolves to a TransactionResponse, NOT the address — so
+  // we read the address from getSigner and only send createSigner to actually deploy
+  // the signer contract when it has no code yet (it needs code to validate WebAuthn
+  // signatures later). Returning the tx response was the cause of the registration
+  // "unsupported addressable value" error.
+  const signerAddress = await factory.getSigner(pubKeyX, pubKeyY, verifiers) as string;
+  const code = await getProvider().getCode(signerAddress);
+  if (code === '0x') {
+    const tx = await factory.createSigner(pubKeyX, pubKeyY, verifiers);
+    await tx.wait();
+  }
+  return signerAddress;
 }
 
 // ── Step 2: Deploy Safe + register onchain ────────────────────────────────────
@@ -74,11 +85,19 @@ export async function deployConsumerWallet({ ensSubdomain, displayName, countryC
   const tx      = await consumer.registerConsumer(ensHash, nameHash, countryHash, 0, signerAddress);
   const receipt = await tx.wait() as ethers.TransactionReceipt;
 
-  const iface   = new ethers.Interface(CONSUMER_ABI);
-  const log     = receipt.logs.find(l => { try { iface.parseLog(l); return true; } catch { return false; } });
-  if (!log) throw new Error('ConsumerRegistered event not found in receipt');
+  // The receipt also carries the Safe ProxyCreation log; parseLog returns null
+  // (not throws) for logs outside CONSUMER_ABI, so match on a non-null parse AND
+  // the event name rather than "didn't throw".
+  const iface = new ethers.Interface(CONSUMER_ABI);
+  let parsed: ethers.LogDescription | null = null;
+  for (const l of receipt.logs) {
+    try {
+      const p = iface.parseLog(l);
+      if (p && p.name === 'ConsumerRegistered') { parsed = p; break; }
+    } catch { /* not a Consumer event */ }
+  }
+  if (!parsed) throw new Error('ConsumerRegistered event not found in receipt');
 
-  const parsed  = iface.parseLog(log)!;
   const { wallet, globalId } = parsed.args as unknown as { wallet: string; globalId: bigint };
 
   return { walletAddress: wallet, globalConsumerId: Number(globalId), txHash: receipt.hash };
@@ -117,27 +136,39 @@ export async function whitelistInPaymaster({ walletAddress }: { walletAddress: s
 
 // ── Step 7: DB write ──────────────────────────────────────────────────────────
 
-export async function writeConsumerRecord({ walletAddress, globalConsumerId, countryCode, idosCredentialId, idosAccessGrantId }: {
+export async function writeConsumerRecord({ walletAddress, countryCode, idosCredentialId, ensSubdomain, displayName, mobileNumber }: {
   walletAddress: string;
   globalConsumerId: number;
   countryCode: string;
   idosUserId: string;
   idosCredentialId: string;
   idosAccessGrantId: string;
+  ensSubdomain: string;
+  displayName: string;
+  mobileNumber: string;
   txHash: string;
 }): Promise<{ consumer_id: string }> {
+  // Params must be sequential and all referenced or pg can't infer their types
+  // ("could not determine data type of parameter $N"). We persist wallet, country
+  // (also drives the KYC-level lookup), the idOS credential id (NULL when the
+  // best-effort idOS step didn't complete), and the ENS subdomain (the @tag shown
+  // in the app — previously never stored, so Account showed "@—").
   const row = await db.query<{ consumer_id: string }>(
     `INSERT INTO consumers
-       (wallet_address, kyc_level_id, country_code,
-        idos_credential_id, source_system, is_active)
+       (wallet_address, kyc_level_id, country_code, idos_credential_id, ens_subdomain,
+        display_name, mobile_number, source_system, is_active)
      VALUES ($1,
-       (SELECT level_id FROM kyc_levels WHERE country_code=$3 AND level_name LIKE 'Level 0%' LIMIT 1),
-       $3, $4, 'ONCHAIN', true)
+       (SELECT level_id FROM kyc_levels WHERE country_code=$2 AND level_name LIKE 'Level 0%' LIMIT 1),
+       $2, $3, $4, $5, $6, 'ONCHAIN', true)
      ON CONFLICT (wallet_address) DO UPDATE SET
        idos_credential_id = EXCLUDED.idos_credential_id,
+       ens_subdomain      = EXCLUDED.ens_subdomain,
+       display_name       = EXCLUDED.display_name,
+       mobile_number      = EXCLUDED.mobile_number,
        updated_at         = NOW()
      RETURNING consumer_id`,
-    [walletAddress, globalConsumerId, countryCode, idosCredentialId, idosAccessGrantId],
+    [walletAddress, countryCode, idosCredentialId || null, ensSubdomain || null,
+     displayName || null, mobileNumber || null],
   );
   return row.rows[0];
 }
@@ -182,43 +213,69 @@ export async function registerNewConsumer(params: RegisterParams): Promise<Regis
   steps.globalConsumerId = globalConsumerId;
   steps.deployTxHash     = txHash;
 
-  // 3. Create idOS profile (wallet must exist first)
-  await createIdosProfile({ walletAddress, userId, userEncryptionPublicKey, ownershipProofMessage, ownershipProofSignature });
-  steps.idosUserId = userId;
+  // Steps 3–6 are external integrations (idOS, ENS, Pimlico). They are BEST-EFFORT:
+  // a failure is logged and recorded in `steps`, but does not abort registration —
+  // the wallet (signer + Safe) and the DB record are the critical path. This keeps
+  // the pilot working while idOS issuer approval / mainnet ENS funding are pending;
+  // failed steps can be retried out-of-band. Make them strict before production.
+  let credentialId = '';
+  let accessGrantId = '';
 
-  // 4. Issue credential (contains all PII + ensSubdomain for recovery)
-  const { credentialId, accessGrantId } = await issueIdosCredential({
-    userId,
-    walletAddress,
-    credentialData: {
-      firstName:    displayName.split(' ')[0] ?? displayName,
-      familyName:   displayName.split(' ').slice(1).join(' ') ?? '',
-      mobileNumber,
-      countryCode,
-      ensSubdomain,
-      kycLevel:     0,
-    },
-    dwgSignature:        dwgSignature ?? '',
-    delegatedWriteGrant: { ...delegatedWriteGrant, userEncryptionPublicKey: userEncryptionPublicKey ?? '' } as never,
-  });
-  steps.idosCredentialId  = credentialId;
-  steps.idosAccessGrantId = accessGrantId;
+  // 3. Create idOS profile (wallet must exist first)
+  try {
+    await createIdosProfile({ walletAddress, userId, userEncryptionPublicKey, ownershipProofMessage, ownershipProofSignature });
+    steps.idosUserId = userId;
+
+    // 4. Issue credential (contains all PII + ensSubdomain for recovery)
+    const cred = await issueIdosCredential({
+      userId,
+      walletAddress,
+      credentialData: {
+        firstName:    displayName.split(' ')[0] ?? displayName,
+        familyName:   displayName.split(' ').slice(1).join(' ') ?? '',
+        mobileNumber,
+        countryCode,
+        ensSubdomain,
+        kycLevel:     0,
+      },
+      dwgSignature:        dwgSignature ?? '',
+      delegatedWriteGrant: { ...delegatedWriteGrant, userEncryptionPublicKey: userEncryptionPublicKey ?? '' } as never,
+    });
+    credentialId  = cred.credentialId;
+    accessGrantId = cred.accessGrantId;
+    steps.idosCredentialId  = credentialId;
+    steps.idosAccessGrantId = accessGrantId;
+  } catch (e) {
+    console.error('[register] idOS step failed (non-fatal):', (e as Error).message);
+    steps.idosError = (e as Error).message;
+  }
 
   // 5. Register ENS subdomain
   if (ensSubdomain && config.ens.controllerAddress) {
-    await registerEnsSubdomain({ subdomain: ensSubdomain, walletAddress });
-    steps.ensRegistered = true;
+    try {
+      await registerEnsSubdomain({ subdomain: ensSubdomain, walletAddress });
+      steps.ensRegistered = true;
+    } catch (e) {
+      console.error('[register] ENS step failed (non-fatal):', (e as Error).message);
+      steps.ensError = (e as Error).message;
+    }
   }
 
   // 6. Pimlico whitelist
-  await whitelistInPaymaster({ walletAddress });
-  steps.pimlicoWhitelisted = true;
+  try {
+    await whitelistInPaymaster({ walletAddress });
+    steps.pimlicoWhitelisted = true;
+  } catch (e) {
+    console.error('[register] Pimlico step failed (non-fatal):', (e as Error).message);
+    steps.pimlicoError = (e as Error).message;
+  }
 
   // 7. Write DB record
   const dbRow = await writeConsumerRecord({
     walletAddress, globalConsumerId, countryCode,
     idosUserId: userId, idosCredentialId: credentialId,
-    idosAccessGrantId: accessGrantId, txHash,
+    idosAccessGrantId: accessGrantId, ensSubdomain,
+    displayName, mobileNumber, txHash,
   });
   steps.consumerId = dbRow.consumer_id;
 

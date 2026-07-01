@@ -1,0 +1,21 @@
+<svg width="100%" viewBox="0 0 380 260" role="img" xmlns="http://www.w3.org/2000/svg" style="">
+<title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">iMali app icon</title>
+<desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">White rounded square icon with a large brown right-pointing chevron surrounding the iM monogram, and a blue accent strip at the bottom</desc>
+<defs>
+  <clipPath id="ic">
+    <rect x="90" y="30" width="200" height="200" rx="44"/>
+  </clipPath>
+<mask id="imagine-text-gaps-7z0vvk" maskUnits="userSpaceOnUse"><rect x="0" y="0" width="380" height="260" fill="white"/><rect x="144.953125" y="84" width="74.09375" height="59" fill="black" rx="2"/></mask></defs>
+
+
+<rect x="90" y="30" width="200" height="200" rx="44" fill="white" style="stroke: var(--color-border-secondary);;fill:rgb(255, 255, 255);stroke:rgba(31, 30, 29, 0.3);color:rgb(0, 0, 0);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto" stroke-width="0.5"/>
+
+
+<rect x="90" y="188" width="200" height="42" fill="#3B5EA6" clip-path="url(#ic)" style="fill:rgb(59, 94, 166);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+
+<path d="M140,68 L248,119 L140,170" fill="none" stroke="#3D1919" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" mask="url(#imagine-text-gaps-7z0vvk)" style="fill:none;stroke:rgb(61, 25, 25);color:rgb(0, 0, 0);stroke-width:6px;stroke-linecap:round;stroke-linejoin:round;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+
+<text x="182" y="130" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="48" font-weight="700" fill="#3D1919" style="fill:rgb(61, 25, 25);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, &quot;Times New Roman&quot;, serif;font-size:48px;font-weight:700;text-anchor:middle;dominant-baseline:auto">iM</text>
+</svg>

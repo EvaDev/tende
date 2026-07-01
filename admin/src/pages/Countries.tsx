@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
 import { apiFetch } from '@/lib/api';
+import { useRole } from '@/hooks/useRole';
 
 interface Country {
   code: string;
@@ -15,6 +16,7 @@ interface Country {
 const EMPTY = { code: '', name: '', send_enabled: true, receive_enabled: true };
 
 export default function Countries() {
+  const { isAdmin } = useRole();
   const [rows, setRows] = useState<Country[]>([]);
   const [form, setForm] = useState(EMPTY);
   const [adding, setAdding] = useState(false);
@@ -35,10 +37,10 @@ export default function Countries() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-brand-accent">Countries</h2>
-        <Button size="sm" onClick={() => setAdding(v => !v)}>{adding ? 'Cancel' : '+ Add Country'}</Button>
+        {isAdmin && <Button size="sm" onClick={() => setAdding(v => !v)}>{adding ? 'Cancel' : '+ Add Country'}</Button>}
       </div>
 
-      {adding && (
+      {isAdmin && adding && (
         <Card>
           <form onSubmit={handleSubmit} className="grid grid-cols-4 gap-4 items-end">
             <div><Label>Code (ISO 2)</Label><Input value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))} maxLength={2} required /></div>
@@ -62,8 +64,8 @@ export default function Countries() {
               <tr key={c.code} className="hover:bg-gray-50">
                 <td className="px-4 py-3 font-mono font-bold">{c.code}</td>
                 <td className="px-4 py-3">{c.name}</td>
-                <td className="px-4 py-3"><Badge className={c.send_enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}>{c.send_enabled ? 'Enabled' : 'Disabled'}</Badge></td>
-                <td className="px-4 py-3"><Badge className={c.receive_enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}>{c.receive_enabled ? 'Enabled' : 'Disabled'}</Badge></td>
+                <td className="px-4 py-3"><Badge className={c.send_enabled ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>{c.send_enabled ? 'Enabled' : 'Disabled'}</Badge></td>
+                <td className="px-4 py-3"><Badge className={c.receive_enabled ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>{c.receive_enabled ? 'Enabled' : 'Disabled'}</Badge></td>
               </tr>
             ))}
           </tbody>

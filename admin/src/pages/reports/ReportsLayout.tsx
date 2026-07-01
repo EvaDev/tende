@@ -8,6 +8,7 @@ const SUB_NAV = [
   { to: 'summary',   label: 'Summary' },
   { to: 'events',    label: 'Event Feed' },
   { to: 'transfers', label: 'Transfers' },
+  { to: 'treasury',  label: 'Mint & Burn' },
   { to: 'revenue',   label: 'Revenue' },
 ];
 

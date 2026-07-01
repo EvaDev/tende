@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label, Select } from '@/components/ui/input';
 import { apiFetch } from '@/lib/api';
+import { useRole } from '@/hooks/useRole';
 
 interface Currency {
   code: string;
@@ -20,6 +21,7 @@ interface CurrencyType { type_code: string; label: string; badge_class: string }
 const EMPTY = { code: '', name: '', symbol: '', decimals: '2', currency_type: '' };
 
 export default function Currencies() {
+  const { isAdmin } = useRole();
   const [rows, setRows] = useState<Currency[]>([]);
   const [types, setTypes] = useState<CurrencyType[]>([]);
   const [form, setForm] = useState(EMPTY);
@@ -53,10 +55,10 @@ export default function Currencies() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-brand-accent">Currencies</h2>
-        <Button size="sm" onClick={() => setAdding(v => !v)}>{adding ? 'Cancel' : '+ Add Currency'}</Button>
+        {isAdmin && <Button size="sm" onClick={() => setAdding(v => !v)}>{adding ? 'Cancel' : '+ Add Currency'}</Button>}
       </div>
 
-      {adding && (
+      {isAdmin && adding && (
         <Card>
           <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-4">
             <div><Label>Code</Label><Input value={form.code} onChange={f('code')} placeholder="e.g. EUR" required /></div>
@@ -69,7 +71,7 @@ export default function Currencies() {
                 {types.map(t => <option key={t.type_code} value={t.type_code}>{t.label}</option>)}
               </Select>
             </div>
-            {error && <p className="col-span-3 text-red-600 text-sm">{error}</p>}
+            {error && <p className="col-span-3 text-brand-danger text-sm">{error}</p>}
             <div className="col-span-3"><Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save Currency'}</Button></div>
           </form>
         </Card>
@@ -91,7 +93,7 @@ export default function Currencies() {
                 <td className="px-4 py-3">{c.decimals}</td>
                 <td className="px-4 py-3"><Badge className={badgeClass(c.currency_type)}>{c.currency_type}</Badge></td>
                 <td className="px-4 py-3 font-mono text-xs">{c.token_address ? `${c.token_address.slice(0,10)}…` : '—'}</td>
-                <td className="px-4 py-3"><Badge className={c.enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}>{c.enabled ? 'Active' : 'Inactive'}</Badge></td>
+                <td className="px-4 py-3"><Badge className={c.enabled ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>{c.enabled ? 'Active' : 'Inactive'}</Badge></td>
               </tr>
             ))}
           </tbody>

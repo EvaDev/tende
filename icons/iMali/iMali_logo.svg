@@ -1,0 +1,32 @@
+<svg width="100%" viewBox="0 0 380 290" role="img" xmlns="http://www.w3.org/2000/svg" style="">
+<title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">iMali logo — Send money home. Simply.</title>
+<desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">iMali app logo: white rounded square icon with iM monogram in dark brown, blue accent strip with arrow, wordmark iMali and tagline below</desc>
+<defs>
+  <clipPath id="ic">
+    <rect x="115" y="30" width="150" height="150" rx="30"/>
+  </clipPath>
+</defs>
+
+
+<rect x="115" y="30" width="150" height="150" rx="30" fill="white" style="stroke: var(--color-border-secondary);;fill:rgb(255, 255, 255);stroke:rgba(31, 30, 29, 0.3);color:rgb(0, 0, 0);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto" stroke-width="0.5"/>
+
+
+<rect x="115" y="138" width="150" height="42" fill="#3B5EA6" clip-path="url(#ic)" style="fill:rgb(59, 94, 166);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+
+<path d="M179 152 L197 159 L179 166" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:rgb(255, 255, 255);color:rgb(0, 0, 0);stroke-width:2.5px;stroke-linecap:round;stroke-linejoin:round;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+
+<text x="190" y="110" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="54" font-weight="700" fill="#3D1919" style="fill:rgb(61, 25, 25);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, &quot;Times New Roman&quot;, serif;font-size:54px;font-weight:700;text-anchor:middle;dominant-baseline:auto">iM</text>
+
+
+<rect x="150" y="130" width="80" height="3" rx="1.5" fill="#3B5EA6" style="fill:rgb(59, 94, 166);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+
+<text x="190" y="222" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="36" font-weight="700" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, &quot;Times New Roman&quot;, serif;font-size:36px;font-weight:700;text-anchor:middle;dominant-baseline:auto">
+  <tspan fill="#3B5EA6" style="fill:rgb(59, 94, 166);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, &quot;Times New Roman&quot;, serif;font-size:36px;font-weight:700;text-anchor:middle;dominant-baseline:auto">i</tspan><tspan fill="#3D1919" style="fill:rgb(61, 25, 25);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, &quot;Times New Roman&quot;, serif;font-size:36px;font-weight:700;text-anchor:middle;dominant-baseline:auto">Mali</tspan>
+</text>
+
+
+<text x="190" y="256" text-anchor="middle" font-family="'Helvetica Neue', Arial, sans-serif" font-size="13" style="fill: var(--color-text-secondary);;fill:rgb(61, 61, 58);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Helvetica Neue&quot;, Arial, sans-serif;font-size:13px;font-weight:400;text-anchor:middle;dominant-baseline:auto" letter-spacing="0.8">Send money home. Simply.</text>
+</svg>

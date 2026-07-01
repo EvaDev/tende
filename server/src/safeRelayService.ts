@@ -168,6 +168,20 @@ export async function kycLevelOf(wallet: string): Promise<number> {
   try { return Number(await c.getKycLevel(wallet)); } catch { return 0; }
 }
 
+/// Read whether an address is a registered consumer (any KYC level, Level 0+).
+/// Mirrors the Vault transfer gate (v1.2.0): registration, not KYC level, is what
+/// admits a party — getKycLevel returns 0 for both Level-0 and unregistered wallets,
+/// so this is the only way to tell them apart.
+export async function isRegisteredConsumer(wallet: string): Promise<boolean> {
+  if (!config.contracts.consumer) return false;
+  const c = new ethers.Contract(
+    config.contracts.consumer,
+    ['function isRegistered(address wallet) view returns (bool)'],
+    provider(),
+  );
+  try { return await c.isRegistered(wallet) as boolean; } catch { return false; }
+}
+
 /// Read whether an address is a Vault trusted counterparty (merchant / treasury / escrow).
 export async function isTrustedCounterparty(wallet: string): Promise<boolean> {
   if (!config.contracts.vault) return false;
