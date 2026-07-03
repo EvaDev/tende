@@ -37,7 +37,13 @@ export function useRole(): { role: Role; isAdmin: boolean; isMerchant: boolean; 
         setRole(probed);
         // 2. Known wallet with no (valid) token yet → sign once to obtain a JWT.
         if (probed !== 'none' && !restoreToken()) {
-          try { await loginWithWallet(addr, (msg) => signMessageAsync({ message: msg })); } catch { /* user rejected */ }
+          try {
+            await loginWithWallet(addr, (msg) => signMessageAsync({ message: msg }));
+            // The token now exists. Authenticated data hooks (e.g. useMerchant's
+            // /api/merchants/me) may have fired during the signing delay and 401'd —
+            // nudge them to refetch now instead of leaving the page stuck until a reload.
+            window.dispatchEvent(new Event('merchant-refresh'));
+          } catch { /* user rejected the signature */ }
         }
         // New wallet (probed === 'none') signs only on merchant-signup submit.
         if (!cancelled) setResolved(true);

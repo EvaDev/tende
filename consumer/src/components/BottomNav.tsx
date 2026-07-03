@@ -13,7 +13,7 @@ export default function BottomNav() {
   const navigate     = useNavigate();
 
   return (
-    <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-brand-card border-t border-brand-accent/20 safe-bottom z-50 shadow-lg">
+    <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-brand-bg border-t border-brand-text/10 safe-bottom z-50 shadow-lg">
       <div className="flex">
         {tabs.map(({ path, label, Icon }) => {
           const active = pathname.startsWith(path);
@@ -21,11 +21,17 @@ export default function BottomNav() {
             <button
               key={path}
               onClick={() => navigate(path)}
-              className={`flex-1 flex flex-col items-center gap-1 py-3 text-[10px] font-medium transition-colors ${
-                active ? 'text-brand-accent' : 'text-brand-accent/40'
+              className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors ${
+                active ? 'text-brand-text' : 'text-brand-text/60'
               }`}
             >
-              <Icon size={20} />
+              <span
+                className={`flex items-center justify-center rounded-full px-3 py-1 transition-colors ${
+                  active ? 'bg-brand-accent/30' : ''
+                }`}
+              >
+                <Icon size={20} />
+              </span>
               {label}
             </button>
           );

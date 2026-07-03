@@ -67,6 +67,16 @@ function ToggleRow({ label, description, value, onChange, disabled }: {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+// Admin pages that can be opted into public (no-login) read-only viewing. Keys must
+// match the route path (nav item `to` minus '/') and the backend page keys.
+const PUBLIC_PAGE_OPTIONS = [
+  { key: 'reports',      label: 'Reports',      desc: 'On-chain activity, sign-up funnel, balances and revenue.' },
+  { key: 'treasury',     label: 'Treasury',     desc: 'Token supply and reserve holdings.' },
+  { key: 'registration', label: 'Registration', desc: 'The consumer sign-up field configuration.' },
+  { key: 'assets',       label: 'Assets',       desc: 'Tradeable asset registry and pricing.' },
+  { key: 'contracts',    label: 'Contracts',    desc: 'Deployed contract addresses and live versions.' },
+];
+
 export default function SettingsPage() {
   const { isConnected } = useAccount();
   const { isAdmin } = useRole();
@@ -119,6 +129,16 @@ export default function SettingsPage() {
     const next = current === 'true' ? 'false' : 'true';
     setConfig(c => ({ ...(c ?? {}), [key]: next }));
     saveConfig(key, next);
+  }
+
+  // Public read-only pages are stored as a CSV in the `app.public_pages` config key.
+  const publicPages = (config?.['app.public_pages'] ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  function togglePublicPage(key: string) {
+    const set = new Set(publicPages);
+    set.has(key) ? set.delete(key) : set.add(key);
+    const csv = [...set].join(',');
+    setConfig(c => ({ ...(c ?? {}), 'app.public_pages': csv }));
+    saveConfig('app.public_pages', csv);
   }
 
   async function saveKyc() {
@@ -223,6 +243,26 @@ export default function SettingsPage() {
           disabled={!isAdmin}
           onChange={() => toggleConfig('feature.consumer.family', config['feature.consumer.family'] ?? 'false')}
         />
+      </Card>}
+
+      {/* ── Public (no-login) pages ── */}
+      {config && <Card>
+        <CardHeader><CardTitle>Public pages (no login)</CardTitle></CardHeader>
+        <p className="text-sm text-gray-500 -mt-2 mb-1">
+          Pages toggled on here are visible <strong>read-only to anyone</strong> who opens the console
+          without connecting a wallet — including the data they show. Write actions always require an
+          admin login. Everything is off by default.
+        </p>
+        {PUBLIC_PAGE_OPTIONS.map(p => (
+          <ToggleRow
+            key={p.key}
+            label={p.label}
+            description={p.desc}
+            value={publicPages.includes(p.key)}
+            disabled={!isAdmin}
+            onChange={() => togglePublicPage(p.key)}
+          />
+        ))}
       </Card>}
 
       {/* ── KYC levels ── */}

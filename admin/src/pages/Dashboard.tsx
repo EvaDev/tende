@@ -37,12 +37,14 @@ export default function Dashboard() {
     }).catch(() => {});
   }, []);
 
+  // Row-major over 3 columns → col1: Countries/Currencies, col2: Merchants/Products,
+  // col3: Consumers/Pending KYC.
   const tiles = [
+    { label: 'Countries',    value: counts.countries,  path: '/countries'  },
     { label: 'Merchants',    value: counts.merchants,  path: '/merchants'  },
     { label: 'Consumers',    value: counts.consumers,  path: '/consumers'  },
-    { label: 'Products',     value: counts.products,   path: '/products'   },
     { label: 'Currencies',   value: counts.currencies, path: '/currencies' },
-    { label: 'Countries',    value: counts.countries,  path: '/countries'  },
+    { label: 'Products',     value: counts.products,   path: '/products'   },
     { label: 'Pending KYC',  value: counts.pendingKyc, path: '/consumers'  },
   ];
 

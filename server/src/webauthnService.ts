@@ -60,7 +60,7 @@ function verifyClientData(clientDataJSON: Buffer, expectedType: 'webauthn.create
   catch { throw new Error('Invalid clientDataJSON'); }
 
   if (data.type !== expectedType) throw new Error(`Unexpected clientData type: ${data.type}`);
-  if (data.origin !== config.webauthn.origin) throw new Error(`Origin mismatch: ${data.origin}`);
+  if (!data.origin || !config.webauthn.origins.includes(data.origin)) throw new Error(`Origin mismatch: ${data.origin}`);
   if (!data.challenge || !consumeChallenge(data.challenge)) {
     throw new Error('Challenge invalid, expired, or replayed');
   }

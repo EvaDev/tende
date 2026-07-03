@@ -25,8 +25,19 @@ export interface TransferResult {
   currency: string;
 }
 
+// Optional merchant-purchase context — sent with a Buy-flow payment so the backend
+// records it in the merchant sales ledger. Ignored for ordinary P2P sends.
+export interface SalePayload {
+  merchantId?: string;
+  storeNumber?: string;
+  tillNumber?: string;
+  lat?: number;
+  lng?: number;
+  items?: { name: string; qty: number; unitPrice: number }[];
+}
+
 /// Step 1 — ask the backend to build the transfer and return the hash to sign.
-export function prepareTransfer(input: { to: string; amount: string; currency: string }): Promise<PreparedTransfer> {
+export function prepareTransfer(input: { to: string; amount: string; currency: string; sale?: SalePayload }): Promise<PreparedTransfer> {
   return api.post<PreparedTransfer>('/consumer/transfer/prepare', input);
 }
 

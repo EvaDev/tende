@@ -19,6 +19,20 @@ export interface AuthedRequest extends Express.Request {
   consumer: { walletAddress: string; consumerId: string };
 }
 
+// Merchant *operator* auth (org/member model — see project_merchant_org_model
+// memory). Distinct from the merchant JWT above (which authenticates the
+// merchant's own wallet). A member has no wallet at all — identity is a
+// passkey scoped to one merchant org, with a role controlling what they can do.
+export interface MemberJwtPayload {
+  sub: string;           // merchant_members.id, as a string
+  memberId: number;
+  merchantId: string;
+  role: 'org_admin' | 'store_manager' | 'cashier';
+  tokenRole: 'merchant_member';
+  iat?: number;
+  exp?: number;
+}
+
 // ── DB row shapes ─────────────────────────────────────────────────────────────
 
 export interface ConsumerRow {

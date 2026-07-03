@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SortableTable, type Col } from '@/components/SortableTable';
 import { apiFetch, api } from '@/lib/api';
 import { statusColor, shortAddr } from '@/lib/utils';
 import { useRole } from '@/hooks/useRole';
@@ -28,6 +29,32 @@ interface EscrowData {
 }
 
 const sym = (c: string) => (c === 'USD' ? '$' : c === 'ZAR' ? 'R' : '');
+
+const claimCols: Col<Claim>[] = [
+  { key: 'sender', header: 'Sender', className: 'px-4 py-3 font-mono text-xs',
+    search: c => c.sender, sort: c => c.sender,
+    render: c => c.sender },
+  { key: 'recipient', header: 'Recipient', className: 'px-4 py-3 font-mono text-xs',
+    search: c => c.recipientMasked, sort: c => c.recipientMasked,
+    render: c => c.recipientMasked },
+  { key: 'amount', header: 'Amount', className: 'px-4 py-3 font-medium',
+    sort: c => Number(c.amount),
+    render: c => <>{sym(c.currency)}{Number(c.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</> },
+  { key: 'status', header: 'Status', className: 'px-4 py-3',
+    sort: c => (c.expired ? 'expired' : c.status),
+    render: c => <Badge className={statusColor(c.expired ? 'EXPIRED' : c.status)}>{c.expired ? 'expired' : c.status}</Badge> },
+  { key: 'created', header: 'Created', className: 'px-4 py-3 text-gray-400',
+    sort: c => c.createdAt,
+    render: c => new Date(c.createdAt).toLocaleDateString() },
+  { key: 'expires', header: 'Expires', className: 'px-4 py-3 text-gray-400',
+    sort: c => c.expiresAt,
+    render: c => new Date(c.expiresAt).toLocaleDateString() },
+  { key: 'tx', header: 'Tx', className: 'px-4 py-3',
+    search: c => c.releaseTx ?? c.escrowTx ?? '',
+    render: c => ((c.releaseTx ?? c.escrowTx)
+      ? <a href={`https://sepolia.etherscan.io/tx/${c.releaseTx ?? c.escrowTx}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] underline hover:text-brand-accent">{shortAddr(c.releaseTx ?? c.escrowTx!)}</a>
+      : <span className="text-gray-300">—</span>) },
+];
 
 export default function Escrow() {
   const { isAdmin } = useRole();
@@ -92,37 +119,13 @@ export default function Escrow() {
       )}
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b">
-            <tr>
-              {['Sender', 'Recipient', 'Amount', 'Status', 'Created', 'Expires', 'Tx'].map(h => (
-                <th key={h} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {(!data || data.claims.length === 0) && (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">No escrow claims yet</td></tr>
-            )}
-            {data?.claims.map(c => (
-              <tr key={c.id} className="border-b hover:bg-gray-50">
-                <td className="px-4 py-3 font-mono text-xs">{c.sender}</td>
-                <td className="px-4 py-3 font-mono text-xs">{c.recipientMasked}</td>
-                <td className="px-4 py-3 font-medium">{sym(c.currency)}{Number(c.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                <td className="px-4 py-3">
-                  <Badge className={statusColor(c.expired ? 'EXPIRED' : c.status)}>{c.expired ? 'expired' : c.status}</Badge>
-                </td>
-                <td className="px-4 py-3 text-gray-400">{new Date(c.createdAt).toLocaleDateString()}</td>
-                <td className="px-4 py-3 text-gray-400">{new Date(c.expiresAt).toLocaleDateString()}</td>
-                <td className="px-4 py-3">
-                  {(c.releaseTx ?? c.escrowTx)
-                    ? <a href={`https://sepolia.etherscan.io/tx/${c.releaseTx ?? c.escrowTx}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] underline hover:text-brand-accent">{shortAddr(c.releaseTx ?? c.escrowTx!)}</a>
-                    : <span className="text-gray-300">—</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <SortableTable
+          cols={claimCols}
+          rows={data?.claims ?? []}
+          initialSort={{ key: 'created', dir: 'desc' }}
+          searchable
+          searchPlaceholder="Search sender, recipient or tx…"
+        />
       </Card>
     </div>
   );

@@ -34,3 +34,10 @@ export function useAppName() {
   const config = useAppConfig();
   return config['app.name'] ?? APP_DEFAULTS.name;
 }
+
+// Admin page keys opted into public (no-login) read-only viewing, from the
+// `app.public_pages` config (CSV). Empty when nothing is exposed.
+export function usePublicPages(): string[] {
+  const config = useAppConfig();
+  return (config['app.public_pages'] ?? '').split(',').map(s => s.trim()).filter(Boolean);
+}

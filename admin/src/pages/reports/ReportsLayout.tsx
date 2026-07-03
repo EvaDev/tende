@@ -5,11 +5,14 @@ import { cn } from '@/lib/utils';
 // Multi-page reports over the indexed chain_events (admin-only endpoints under
 // /api/admin/reports). One "Reports" sidebar item; the sections are in-page sub-nav.
 const SUB_NAV = [
-  { to: 'summary',   label: 'Summary' },
-  { to: 'events',    label: 'Event Feed' },
-  { to: 'transfers', label: 'Transfers' },
-  { to: 'treasury',  label: 'Mint & Burn' },
-  { to: 'revenue',   label: 'Revenue' },
+  { to: 'summary',       label: 'Summary' },
+  { to: 'registrations', label: 'Registrations' },
+  { to: 'events',        label: 'Event Feed' },
+  { to: 'transfers',     label: 'Transfers' },
+  { to: 'balances',      label: 'Balances' },
+  { to: 'sales',         label: 'Sales' },
+  { to: 'treasury',      label: 'Mint & Burn' },
+  { to: 'revenue',       label: 'Revenue' },
 ];
 
 export default function ReportsLayout() {
@@ -17,7 +20,7 @@ export default function ReportsLayout() {
     <div className="max-w-5xl space-y-5">
       <div>
         <h2 className="text-2xl font-bold text-brand-accent">Reports</h2>
-        <p className="text-white/80 mt-2 text-sm">
+        <p className="text-white mt-2 text-sm">
           On-chain activity indexed from the contracts. The chain is the source of truth; these
           views are read-only projections for ops, compliance and revenue.
         </p>

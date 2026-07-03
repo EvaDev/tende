@@ -267,7 +267,7 @@ export default function Treasury() {
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-semibold text-brand-accent">Treasury</h2>
-      {!info && <p className="text-gray-400 text-sm">Loading…</p>}
+      {!info && <p className="text-white text-sm">Loading…</p>}
 
       {/* Data-driven supply table — new tokens appear automatically. Minted = the
           closed-loop treasury tokens we issue; Holdings = assets the platform owns

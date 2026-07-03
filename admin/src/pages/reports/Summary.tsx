@@ -1,4 +1,5 @@
-import { Section, Table, useReport, ReportState } from './_shared';
+import { Section, useReport, ReportState } from './_shared';
+import { SortableTable, type Col } from '@/components/SortableTable';
 
 interface SummaryData {
   totalEvents: number;
@@ -6,6 +7,13 @@ interface SummaryData {
   cursor: { last_block: string; updated_at: string } | null;
   byType: { contract: string; event_name: string; n: number }[];
 }
+
+type ByType = SummaryData['byType'][number];
+const byTypeCols: Col<ByType>[] = [
+  { key: 'contract', header: 'Contract', sort: r => r.contract, search: r => r.contract, render: r => r.contract },
+  { key: 'event', header: 'Event', sort: r => r.event_name, search: r => r.event_name, render: r => r.event_name },
+  { key: 'count', header: 'Count', sort: r => r.n, render: r => r.n.toLocaleString() },
+];
 
 export default function Summary() {
   const { data, loading, error } = useReport<SummaryData>('/api/admin/reports/summary');
@@ -33,10 +41,7 @@ export default function Summary() {
             <p className="text-xs text-gray-500">Cursor last updated {new Date(data.cursor.updated_at).toLocaleString()}.</p>
           )}
           {data.byType.length > 0 ? (
-            <Table
-              head={['Contract', 'Event', 'Count']}
-              rows={data.byType.map(r => [r.contract, r.event_name, r.n.toLocaleString()])}
-            />
+            <SortableTable cols={byTypeCols} rows={data.byType} initialSort={{ key: 'count', dir: 'desc' }} />
           ) : <ReportState loading={false} error={null} empty />}
         </>
       )}

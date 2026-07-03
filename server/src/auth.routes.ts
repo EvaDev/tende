@@ -72,7 +72,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
         `SELECT merchant_id, is_active FROM merchants WHERE LOWER(wallet_address) = $1`, [wallet]),
       db.query<ConsumerRow>(
         `SELECT consumer_id, kyc_level_id, country_code, ens_subdomain, is_active
-         FROM consumers WHERE wallet_address = $1`, [wallet]),
+         FROM consumers WHERE LOWER(wallet_address) = $1`, [wallet]),
     ]);
 
     const admin    = adminRes.rows[0];
@@ -177,7 +177,7 @@ router.post('/passkey/login', async (req: Request, res: Response): Promise<void>
     const wallet = cred.wallet_address.toLowerCase();
     const cRes = await db.query<ConsumerRow>(
       `SELECT consumer_id, kyc_level_id, country_code, ens_subdomain, is_active
-       FROM consumers WHERE wallet_address = $1`,
+       FROM consumers WHERE LOWER(wallet_address) = $1`,
       [wallet],
     );
     const consumer = cRes.rows[0];

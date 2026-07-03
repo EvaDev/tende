@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/input';
+import { SortableTable, type Col } from '@/components/SortableTable';
 import { apiFetch } from '@/lib/api';
 import { useRole } from '@/hooks/useRole';
 
@@ -14,6 +15,19 @@ interface Country {
 }
 
 const EMPTY = { code: '', name: '', send_enabled: true, receive_enabled: true };
+
+const cols: Col<Country>[] = [
+  { key: 'code', header: 'Code',
+    sort: c => c.code, search: c => c.code,
+    render: c => <span className="font-mono font-bold">{c.code}</span> },
+  { key: 'name', header: 'Name',
+    sort: c => c.name, search: c => c.name,
+    render: c => c.name },
+  { key: 'send', header: 'Send', sort: c => (c.send_enabled ? 1 : 0),
+    render: c => <Badge className={c.send_enabled ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>{c.send_enabled ? 'Enabled' : 'Disabled'}</Badge> },
+  { key: 'receive', header: 'Receive', sort: c => (c.receive_enabled ? 1 : 0),
+    render: c => <Badge className={c.receive_enabled ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>{c.receive_enabled ? 'Enabled' : 'Disabled'}</Badge> },
+];
 
 export default function Countries() {
   const { isAdmin } = useRole();
@@ -53,23 +67,13 @@ export default function Countries() {
       )}
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b">
-            <tr>{['Code','Name','Send','Receive'].map(h =>
-              <th key={h} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr>
-          </thead>
-          <tbody className="divide-y">
-            {rows.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400">No countries configured</td></tr>}
-            {rows.map(c => (
-              <tr key={c.code} className="hover:bg-gray-50">
-                <td className="px-4 py-3 font-mono font-bold">{c.code}</td>
-                <td className="px-4 py-3">{c.name}</td>
-                <td className="px-4 py-3"><Badge className={c.send_enabled ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>{c.send_enabled ? 'Enabled' : 'Disabled'}</Badge></td>
-                <td className="px-4 py-3"><Badge className={c.receive_enabled ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>{c.receive_enabled ? 'Enabled' : 'Disabled'}</Badge></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <SortableTable
+          cols={cols}
+          rows={rows}
+          initialSort={{ key: 'name', dir: 'asc' }}
+          searchable
+          searchPlaceholder="Search code or name…"
+        />
       </Card>
     </div>
   );

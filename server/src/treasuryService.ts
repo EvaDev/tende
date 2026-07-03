@@ -83,6 +83,25 @@ export async function vaultAdminDebit(wallet: string, amount: bigint, currency: 
   const r = await tx.wait() as ethers.TransactionReceipt; return r.hash;
 }
 
+// ── Settlement payout (merchant org withdrawals) ───────────────────────────────
+// Vault.withdrawToExternal is onlyRole(ADMIN_EXECUTOR_ROLE) — a backend-signed
+// call, no signature from `from` required on-chain. That's what makes the
+// "hybrid" custody model work: the head-office approval gate (see
+// settlement.routes.ts) is an off-chain check the backend enforces *before*
+// calling this, not an on-chain multisig.
+const VAULT_WITHDRAW_ABI = ['function withdrawToExternal(address from, address recipient, address token, uint256 amount)'];
+
+export async function withdrawToExternal(
+  fromWallet: string, recipient: string, tokenAddress: string, amount: bigint,
+): Promise<string> {
+  if (!config.contracts.vault)    throw new Error('No vault address configured');
+  if (!config.backend.privateKey) throw new Error('No backend signer configured');
+  const signer = new ethers.Wallet(config.backend.privateKey, new ethers.JsonRpcProvider(config.chain.rpcUrl));
+  const v = new ethers.Contract(config.contracts.vault, VAULT_WITHDRAW_ABI, signer);
+  const tx = await v.withdrawToExternal(fromWallet, recipient, tokenAddress, amount);
+  const r = await tx.wait() as ethers.TransactionReceipt; return r.hash;
+}
+
 // ── POC / dev only: simulate the platform acquiring USDC reserves ──────────────
 // On Sepolia there is no real USDC purchase rail and no Uniswap liquidity, so this
 // mints the Vault's configured USDC (a mock token with an open mint) straight into

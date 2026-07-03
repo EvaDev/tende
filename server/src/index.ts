@@ -38,6 +38,9 @@ import adminRouter       from './admin.routes.js';
 import referenceRouter   from './reference.routes.js';
 import reportsRouter     from './reports.routes.js';
 import claimRouter       from './claim.routes.js';
+import memberAuthRouter  from './memberAuth.routes.js';
+import settlementRouter  from './settlement.routes.js';
+import merchantSelfRouter from './merchantSelf.routes.js';
 import { startIndexer }  from './indexerService.js';
 
 const app = express();
@@ -88,6 +91,9 @@ app.use('/api/config',    configRouter);
 app.use('/api/admin',         adminRouter);
 app.use('/api/admin/reports', reportsRouter);
 app.use('/api/claim',         claimRouter);
+app.use('/api/member-auth',   memberAuthRouter);
+app.use('/api/settlement',    settlementRouter);
+app.use('/api/merchant',      merchantSelfRouter);
 app.use('/api',               referenceRouter);
 
 // ── Server-Sent Events log stream ─────────────────────────────────────────────

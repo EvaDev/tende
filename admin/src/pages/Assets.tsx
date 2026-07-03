@@ -3,8 +3,10 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label, Select } from '@/components/ui/input';
+import { SortableTable, type Col } from '@/components/SortableTable';
 import { apiFetch, AuthError } from '@/lib/api';
 import { useRole } from '@/hooks/useRole';
+import { usePublicPages } from '@/hooks/useAppConfig';
 
 interface Asset {
   asset_id: number;
@@ -40,6 +42,8 @@ const EMPTY = {
 
 export default function Assets() {
   const { isAdmin } = useRole();
+  const publicPages = usePublicPages();
+  const canView = isAdmin || publicPages.includes('assets');
   const [rows, setRows]     = useState<Asset[] | null>(null);
   const [error, setError]   = useState<'auth' | 'other' | null>(null);
   const [adding, setAdding] = useState(false);
@@ -51,9 +55,9 @@ export default function Assets() {
     apiFetch<Asset[]>('/api/admin/assets').then(r => { setRows(r); setError(null); })
       .catch(e => setError(e instanceof AuthError ? 'auth' : 'other'));
   }
-  useEffect(() => { if (isAdmin) load(); }, [isAdmin]);
+  useEffect(() => { if (canView) load(); }, [canView]);
 
-  if (!isAdmin) {
+  if (!canView) {
     return (
       <div className="max-w-2xl">
         <h2 className="text-xl font-semibold text-brand-accent mb-3">Assets</h2>
@@ -91,18 +95,86 @@ export default function Assets() {
   }
 
   const fmtUsd = (n: number | null) => n == null ? '—' : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  const priceOf = (a: Asset) => a.price_source === 'dex_quote' ? a.live_price_usd : (a.price_usd == null ? null : Number(a.price_usd));
+  const yn = (b: boolean) => b ? <span className="text-brand-accent font-medium">Yes</span> : <span className="text-gray-400">No</span>;
+
+  // Read-only columns for public (no-login) viewers — same data, no write controls.
+  const viewCols: Col<Asset>[] = [
+    { key: 'asset', header: 'Asset', className: 'px-3', sort: a => a.symbol, search: a => `${a.symbol} ${a.name}`,
+      render: a => <div><div className="font-medium text-gray-900">{a.symbol}</div><div className="text-xs text-gray-500">{a.name}</div></div> },
+    { key: 'class', header: 'Class', className: 'px-3', sort: a => a.asset_class,
+      render: a => <Badge className={CLASS_COLORS[a.asset_class] ?? 'bg-gray-100 text-gray-600'}>{a.asset_class}</Badge> },
+    { key: 'price', header: 'Price (USD)', className: 'px-3', sort: a => priceOf(a) ?? -1,
+      render: a => <div><div className="font-medium text-gray-900">{fmtUsd(priceOf(a))}</div>{a.price_source === 'dex_quote' && <div className="text-xs text-gray-400">Uniswap {FEE_LABEL[a.pool_fee_tier] ?? a.pool_fee_tier}</div>}</div> },
+    { key: 'markup', header: 'Markup', className: 'px-3', sort: a => a.markup_bps, render: a => <span className="tabular-nums">{a.markup_bps} bps</span> },
+    { key: 'kyc', header: 'KYC', className: 'px-3', sort: a => a.min_kyc_tier, render: a => a.min_kyc_tier },
+    { key: 'listed', header: 'Listed', className: 'px-3', sort: a => (a.enabled ? 1 : 0), render: a => yn(a.enabled) },
+    { key: 'buy', header: 'Buy', className: 'px-3', sort: a => (a.buy_enabled ? 1 : 0), render: a => yn(a.buy_enabled) },
+    { key: 'sell', header: 'Sell', className: 'px-3', sort: a => (a.sell_enabled ? 1 : 0), render: a => yn(a.sell_enabled) },
+    { key: 'chain', header: 'Chain', className: 'px-3 text-gray-500', sort: a => a.chain_id, render: a => a.chain_id },
+  ];
+
+  const editCols: Col<Asset>[] = [
+    { key: 'asset', header: 'Asset', className: 'px-3',
+      sort: a => a.symbol, search: a => `${a.symbol} ${a.name}`,
+      render: a => (
+        <div>
+          <div className="font-medium text-gray-900">{a.symbol}</div>
+          <div className="text-xs text-gray-500">{a.name}</div>
+        </div>
+      ) },
+    { key: 'class', header: 'Class', className: 'px-3',
+      sort: a => a.asset_class,
+      render: a => <Badge className={CLASS_COLORS[a.asset_class] ?? 'bg-gray-100 text-gray-600'}>{a.asset_class}</Badge> },
+    { key: 'price', header: 'Price (USD)', className: 'px-3',
+      render: a => a.price_source === 'dex_quote' ? (
+        <div>
+          <div className="font-medium text-gray-900">{fmtUsd(a.live_price_usd)}</div>
+          <div className="text-xs text-gray-400">Uniswap {FEE_LABEL[a.pool_fee_tier] ?? a.pool_fee_tier}</div>
+        </div>
+      ) : (
+        <Input type="number" className="w-28 h-7 text-xs" defaultValue={a.price_usd ?? ''} placeholder="set price"
+          onBlur={e => { const v = e.target.value; if (v !== (a.price_usd ?? '')) patch(a.asset_id, { price_usd: v === '' ? null : Number(v) }); }} />
+      ) },
+    { key: 'markup', header: 'Markup', className: 'px-3',
+      render: a => (
+        <div className="flex items-center gap-1">
+          <Input type="number" className="w-16 h-7 text-xs" defaultValue={a.markup_bps}
+            onBlur={e => { const v = Number(e.target.value); if (v !== a.markup_bps) patch(a.asset_id, { markup_bps: v }); }} />
+          <span className="text-xs text-gray-400">bps</span>
+        </div>
+      ) },
+    { key: 'kyc', header: 'KYC', className: 'px-3',
+      render: a => (
+        <Select className="w-16 h-7 text-xs" value={a.min_kyc_tier} onChange={e => patch(a.asset_id, { min_kyc_tier: Number(e.target.value) })}>
+          {[0,1,2,3].map(t => <option key={t} value={t}>{t}</option>)}
+        </Select>
+      ) },
+    { key: 'listed', header: 'Listed', className: 'px-3',
+      sort: a => (a.enabled ? 1 : 0),
+      render: a => <Toggle checked={a.enabled} onChange={v => patch(a.asset_id, { enabled: v })} /> },
+    { key: 'buy', header: 'Buy', className: 'px-3',
+      render: a => <Toggle checked={a.buy_enabled} onChange={v => patch(a.asset_id, { buy_enabled: v })} /> },
+    { key: 'sell', header: 'Sell', className: 'px-3',
+      render: a => <Toggle checked={a.sell_enabled} onChange={v => patch(a.asset_id, { sell_enabled: v })} /> },
+    { key: 'chain', header: 'Chain', className: 'px-3 text-gray-500',
+      sort: a => a.chain_id,
+      render: a => a.chain_id },
+  ];
+
+  const cols = isAdmin ? editCols : viewCols;
 
   return (
     <div className="space-y-4 max-w-5xl">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-brand-accent">Tradeable Assets</h2>
-        <Button size="sm" onClick={() => setAdding(v => !v)}>{adding ? 'Cancel' : '+ List Asset'}</Button>
+        {isAdmin && <Button size="sm" onClick={() => setAdding(v => !v)}>{adding ? 'Cancel' : '+ List Asset'}</Button>}
       </div>
 
       {error === 'auth' && <div className="rounded-xl border border-brand-accent/30 bg-brand-accent/10 px-4 py-3 text-sm text-brand-accent">Admin session expired — reconnect your wallet.</div>}
       {error === 'other' && <div className="rounded-xl border border-brand-danger/30 bg-brand-danger/10 px-4 py-3 text-sm text-brand-danger">Could not load assets.</div>}
 
-      {adding && (
+      {isAdmin && adding && (
         <Card className="space-y-4">
           <CardHeader><CardTitle>List a new asset</CardTitle></CardHeader>
           <div className="grid grid-cols-3 gap-4">
@@ -144,52 +216,13 @@ export default function Assets() {
       )}
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b">
-            <tr>{['Asset','Class','Price (USD)','Markup','KYC','Listed','Buy','Sell','Chain'].map(h =>
-              <th key={h} className="text-left px-3 py-3 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr>
-          </thead>
-          <tbody className="divide-y">
-            {rows === null && !error && <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>}
-            {rows?.length === 0 && <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-400">No assets listed yet.</td></tr>}
-            {rows?.map(a => (
-              <tr key={a.asset_id} className="hover:bg-gray-50 align-middle">
-                <td className="px-3 py-2">
-                  <div className="font-medium text-gray-900">{a.symbol}</div>
-                  <div className="text-xs text-gray-500">{a.name}</div>
-                </td>
-                <td className="px-3 py-2"><Badge className={CLASS_COLORS[a.asset_class] ?? 'bg-gray-100 text-gray-600'}>{a.asset_class}</Badge></td>
-                <td className="px-3 py-2">
-                  {a.price_source === 'dex_quote' ? (
-                    <div>
-                      <div className="font-medium text-gray-900">{fmtUsd(a.live_price_usd)}</div>
-                      <div className="text-xs text-gray-400">Uniswap {FEE_LABEL[a.pool_fee_tier] ?? a.pool_fee_tier}</div>
-                    </div>
-                  ) : (
-                    <Input type="number" className="w-28 h-7 text-xs" defaultValue={a.price_usd ?? ''} placeholder="set price"
-                      onBlur={e => { const v = e.target.value; if (v !== (a.price_usd ?? '')) patch(a.asset_id, { price_usd: v === '' ? null : Number(v) }); }} />
-                  )}
-                </td>
-                <td className="px-3 py-2">
-                  <div className="flex items-center gap-1">
-                    <Input type="number" className="w-16 h-7 text-xs" defaultValue={a.markup_bps}
-                      onBlur={e => { const v = Number(e.target.value); if (v !== a.markup_bps) patch(a.asset_id, { markup_bps: v }); }} />
-                    <span className="text-xs text-gray-400">bps</span>
-                  </div>
-                </td>
-                <td className="px-3 py-2">
-                  <Select className="w-16 h-7 text-xs" value={a.min_kyc_tier} onChange={e => patch(a.asset_id, { min_kyc_tier: Number(e.target.value) })}>
-                    {[0,1,2,3].map(t => <option key={t} value={t}>{t}</option>)}
-                  </Select>
-                </td>
-                <td className="px-3 py-2"><Toggle checked={a.enabled} onChange={v => patch(a.asset_id, { enabled: v })} /></td>
-                <td className="px-3 py-2"><Toggle checked={a.buy_enabled} onChange={v => patch(a.asset_id, { buy_enabled: v })} /></td>
-                <td className="px-3 py-2"><Toggle checked={a.sell_enabled} onChange={v => patch(a.asset_id, { sell_enabled: v })} /></td>
-                <td className="px-3 py-2 text-gray-500">{a.chain_id}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <SortableTable
+          cols={cols}
+          rows={rows ?? []}
+          initialSort={{ key: 'asset', dir: 'asc' }}
+          searchable
+          searchPlaceholder="Search symbol or name…"
+        />
         <p className="text-xs text-gray-500 px-4 py-3 border-t bg-gray-50">
           <strong>Price</strong> for Uniswap assets is live (USDC quote, read-only). <strong>Markup</strong> is the
           platform's spread in basis points (100 bps = 1%), added to the DEX price the consumer pays. Listing =

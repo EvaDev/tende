@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label, Select } from '@/components/ui/input';
+import { SortableTable, type Col } from '@/components/SortableTable';
 import { apiFetch } from '@/lib/api';
 import { fmt, statusColor } from '@/lib/utils';
 import IconPicker from '@/components/IconPicker';
@@ -23,6 +24,27 @@ interface Product {
 }
 
 interface Merchant { id: string; name: string }
+
+const adminCols: Col<Product>[] = [
+  { key: 'icon', header: '', className: 'w-10',
+    render: p => p.icon_id
+      ? <img src={`/api/admin/icons/${p.icon_id}/image`} alt="" className="w-7 h-7 object-contain" />
+      : <div className="w-7 h-7 rounded border border-dashed border-gray-200" /> },
+  { key: 'merchant', header: 'Merchant',
+    sort: p => (p.merchant_name ?? p.merchant_id).toLowerCase(), search: p => p.merchant_name ?? p.merchant_id,
+    render: p => p.merchant_name ?? p.merchant_id },
+  { key: 'name', header: 'Product',
+    sort: p => p.name.toLowerCase(), search: p => p.name,
+    render: p => <span className="font-medium">{p.name}</span> },
+  { key: 'send', header: 'Send', sort: p => p.send_currency, render: p => p.send_currency },
+  { key: 'receive', header: 'Receive', sort: p => p.receive_currency, render: p => p.receive_currency },
+  { key: 'min', header: 'Min', sort: p => p.min_amount, render: p => fmt(p.min_amount) },
+  { key: 'max', header: 'Max', sort: p => p.max_amount, render: p => fmt(p.max_amount) },
+  { key: 'fee', header: 'Fee', sort: p => p.fee_bps,
+    render: p => Number.isFinite(p.fee_bps) ? `${p.fee_bps / 100}%` : '—' },
+  { key: 'status', header: 'Status', sort: p => p.status,
+    render: p => <Badge className={statusColor(p.status)}>{p.status || '—'}</Badge> },
+];
 
 const EMPTY = { merchant_id: '', name: '', send_currency: 'ZAR', receive_currency: 'USDC', min_amount: '', max_amount: '', fee_bps: '50', icon_id: null as number | null };
 
@@ -91,33 +113,13 @@ function AdminProducts() {
       )}
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b">
-            <tr>{['','Merchant','Product','Send','Receive','Min','Max','Fee','Status'].map(h =>
-              <th key={h} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr>
-          </thead>
-          <tbody className="divide-y">
-            {rows.length === 0 && <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-400">No products yet</td></tr>}
-            {rows.map(p => (
-              <tr key={p.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 w-10">
-                  {p.icon_id
-                    ? <img src={`/api/admin/icons/${p.icon_id}/image`} alt="" className="w-7 h-7 object-contain" />
-                    : <div className="w-7 h-7 rounded border border-dashed border-gray-200" />
-                  }
-                </td>
-                <td className="px-4 py-3">{p.merchant_name ?? p.merchant_id}</td>
-                <td className="px-4 py-3 font-medium">{p.name}</td>
-                <td className="px-4 py-3">{p.send_currency}</td>
-                <td className="px-4 py-3">{p.receive_currency}</td>
-                <td className="px-4 py-3">{fmt(p.min_amount)}</td>
-                <td className="px-4 py-3">{fmt(p.max_amount)}</td>
-                <td className="px-4 py-3">{Number.isFinite(p.fee_bps) ? `${p.fee_bps / 100}%` : '—'}</td>
-                <td className="px-4 py-3"><Badge className={statusColor(p.status)}>{p.status || '—'}</Badge></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <SortableTable
+          cols={adminCols}
+          rows={rows}
+          initialSort={{ key: 'name', dir: 'asc' }}
+          searchable
+          searchPlaceholder="Search product or merchant…"
+        />
       </Card>
     </div>
   );
@@ -157,6 +159,24 @@ function MerchantProducts() {
     load();
   }
 
+  const cols: Col<MyProduct>[] = [
+    { key: 'name', header: 'Product',
+      sort: p => p.name.toLowerCase(), search: p => p.name,
+      render: p => <span className="font-medium">{p.name}</span> },
+    { key: 'price', header: 'Unit price', sort: p => Number(p.price),
+      render: p => `R${(Number(p.price) / 100).toFixed(2)}` },
+    { key: 'status', header: 'Status', sort: p => (p.is_active ? 1 : 0),
+      render: p => (
+        <button onClick={() => toggleActive(p)} className={`text-xs px-2 py-1 rounded-lg ${p.is_active ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}`}>
+          {p.is_active ? 'Active' : 'Inactive'}
+        </button>
+      ) },
+    { key: 'actions', header: '', className: 'text-right',
+      render: p => (
+        <button onClick={() => openEdit(p)} className="text-xs text-brand-accent hover:underline">Edit</button>
+      ) },
+  ];
+
   return (
     <div className="space-y-4 max-w-3xl">
       <div className="flex items-center justify-between">
@@ -180,29 +200,13 @@ function MerchantProducts() {
       )}
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b">
-            <tr>{['Product', 'Unit price', 'Status', ''].map(h =>
-              <th key={h} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr>
-          </thead>
-          <tbody className="divide-y">
-            {rows.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400">No products yet</td></tr>}
-            {rows.map(p => (
-              <tr key={p.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium">{p.name}</td>
-                <td className="px-4 py-3">R{(Number(p.price) / 100).toFixed(2)}</td>
-                <td className="px-4 py-3">
-                  <button onClick={() => toggleActive(p)} className={`text-xs px-2 py-1 rounded-lg ${p.is_active ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}`}>
-                    {p.is_active ? 'Active' : 'Inactive'}
-                  </button>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <button onClick={() => openEdit(p)} className="text-xs text-brand-accent hover:underline">Edit</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <SortableTable
+          cols={cols}
+          rows={rows}
+          initialSort={{ key: 'name', dir: 'asc' }}
+          searchable
+          searchPlaceholder="Search product…"
+        />
       </Card>
     </div>
   );

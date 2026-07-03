@@ -4,10 +4,10 @@ import { useAccount } from 'wagmi';
 import MerchantSignup from '@/pages/MerchantSignup';
 import {
   LayoutDashboard, Store, Package, Globe, Coins,
-  Users, Landmark, Zap, Settings, ScrollText, ClipboardList, Info, Boxes, Gem, BookOpen, BarChart3, UserCog, ShieldCheck, ScanLine,
+  Users, Landmark, Zap, Settings, ScrollText, ClipboardList, Info, Boxes, Gem, BookOpen, BarChart3, UserCog, ShieldCheck, ScanLine, Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppName } from '@/hooks/useAppConfig';
+import { useAppName, usePublicPages } from '@/hooks/useAppConfig';
 import { useRole } from '@/hooks/useRole';
 import { useMerchant } from '@/hooks/useMerchant';
 import { useDetectedCountry, flagEmoji } from '@/hooks/useDetectedCountry';
@@ -17,6 +17,7 @@ const NAV = [
   { to: '/',           label: 'Dashboard',  icon: LayoutDashboard },
   { to: '/my-business', label: 'My Business', icon: UserCog, merchantOnly: true },
   { to: '/pos',         label: 'Point of Sale', icon: ScanLine, merchantOnly: true },
+  { to: '/sales',       label: 'Sales', icon: Receipt, merchantOnly: true },
   { to: '/merchants',  label: 'Merchants',  icon: Store },
   { to: '/products',   label: 'Products',   icon: Package },
   { to: '/consumers',  label: 'Consumers',  icon: Users },
@@ -43,6 +44,7 @@ const NETWORKS: Record<number, { label: string; testnet: boolean }> = {
 export default function Layout() {
   const { isConnected, address, chainId, chain } = useAccount();
   const appName = useAppName();
+  const publicPages = usePublicPages();
   const { role, resolved, error } = useRole();
   const { merchant } = useMerchant(role === 'merchant');
   const { country } = useDetectedCountry();
@@ -76,7 +78,13 @@ export default function Layout() {
         <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
           {/* New wallets onboarding as a merchant don't get the nav until registered. */}
           {!needsSignup && NAV
-            .filter(item => (!item.adminOnly || role === 'admin') && (!('merchantOnly' in item) || role === 'merchant'))
+            .filter(item => {
+              if ('merchantOnly' in item && item.merchantOnly) return role === 'merchant';
+              // adminOnly pages are hidden unless you're an admin — or the page has
+              // been opted into public read-only viewing (see Settings → Public pages).
+              if (item.adminOnly) return role === 'admin' || publicPages.includes(item.to.slice(1));
+              return true;
+            })
             .map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
@@ -130,7 +138,7 @@ export default function Layout() {
               {address?.slice(0, 6)}…{address?.slice(-4)}
             </p>
           )}
-          <div className="[&>div>button]:!text-xs [&>div>button]:!py-1.5 [&>div>button]:!px-3">
+          <div className="[&>div>button]:!text-xs [&>div>button]:!py-1.5 [&>div>button]:!px-3 [&>div>button]:!bg-brand-bg [&>div>button]:!text-white [&>div>button:hover]:!opacity-90">
             <ConnectButton
               chainStatus="none"
               showBalance={false}
@@ -140,7 +148,7 @@ export default function Layout() {
           </div>
           {!isConnected && (
             <p className="text-xs text-white/40 leading-tight">
-              Connect to enable admin actions
+              Connect for full access
             </p>
           )}
         </div>

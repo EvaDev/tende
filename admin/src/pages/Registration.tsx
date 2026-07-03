@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { apiFetch } from '@/lib/api';
+import { useRole } from '@/hooks/useRole';
 
 interface RegField {
   field_key: string; label: string;
@@ -33,6 +34,7 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
 }
 
 export default function Registration() {
+  const { isAdmin } = useRole();
   const [fields, setFields] = useState<RegField[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
   const [saved,  setSaved]  = useState<string | null>(null);
@@ -64,7 +66,7 @@ export default function Registration() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h2 className="text-xl font-semibold text-brand-accent">Registration Flow</h2>
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-white mt-1">
           Control which fields appear during consumer sign-up. Disabled fields are skipped entirely.
           Fields marked <strong>Required</strong> must be filled before the consumer can proceed.
         </p>
@@ -94,21 +96,21 @@ export default function Registration() {
                   <td className="px-4 py-3">
                     <Toggle
                       checked={f.included}
-                      disabled={locked}
+                      disabled={locked || !isAdmin}
                       onChange={v => patch(f.field_key, { included: v, required: v ? f.required : false })}
                     />
                   </td>
                   <td className="px-4 py-3">
                     <Toggle
                       checked={f.required}
-                      disabled={!f.included || locked}
+                      disabled={!f.included || locked || !isAdmin}
                       onChange={v => patch(f.field_key, { required: v })}
                     />
                   </td>
                   <td className="px-4 py-3">
                     <select
                       value={f.verification_method}
-                      disabled={!f.included}
+                      disabled={!f.included || !isAdmin}
                       onChange={e => patch(f.field_key, { verification_method: e.target.value })}
                       className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-1 focus:ring-brand-accent/50"
                     >

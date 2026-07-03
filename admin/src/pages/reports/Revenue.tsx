@@ -1,7 +1,23 @@
-import { Section, Table, useReport, ReportState } from './_shared';
+import { Section, useReport, ReportState } from './_shared';
+import { SortableTable, type Col } from '@/components/SortableTable';
 
 interface Revenue { currency: string; platformCut: string; harvests: number }
 interface ConvFee { feeCurrency: string; conversions: number; totalFee: string; totalConverted: string }
+
+const feeCols: Col<ConvFee>[] = [
+  { key: 'currency', header: 'Fee currency', sort: r => r.feeCurrency, render: r => r.feeCurrency },
+  { key: 'conversions', header: 'Conversions', sort: r => r.conversions, render: r => r.conversions.toLocaleString() },
+  { key: 'converted', header: 'Total converted', sort: r => Number(r.totalConverted),
+    render: r => `R${Number(r.totalConverted).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, className: 'tabular-nums' },
+  { key: 'fees', header: 'Total fees', sort: r => Number(r.totalFee),
+    render: r => `R${Number(r.totalFee).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, className: 'tabular-nums' },
+];
+
+const revCols: Col<Revenue>[] = [
+  { key: 'currency', header: 'Currency', sort: r => r.currency, render: r => r.currency },
+  { key: 'cut', header: 'Platform cut (minor units)', sort: r => Number(r.platformCut), render: r => r.platformCut, className: 'tabular-nums' },
+  { key: 'harvests', header: 'Harvests', sort: r => r.harvests, render: r => r.harvests.toLocaleString() },
+];
 
 export default function Revenue() {
   const { data, loading, error } = useReport<Revenue[]>('/api/admin/reports/revenue');
@@ -17,15 +33,7 @@ export default function Revenue() {
         </p>
         <ReportState loading={fees.loading} error={fees.error} empty={!fees.loading && !fees.error && fees.data?.length === 0} />
         {fees.data && fees.data.length > 0 && (
-          <Table
-            head={['Fee currency', 'Conversions', 'Total converted', 'Total fees']}
-            rows={fees.data.map(r => [
-              r.feeCurrency,
-              r.conversions.toLocaleString(),
-              `R${Number(r.totalConverted).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
-              `R${Number(r.totalFee).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
-            ])}
-          />
+          <SortableTable cols={feeCols} rows={fees.data} initialSort={{ key: 'fees', dir: 'desc' }} />
         )}
       </Section>
 
@@ -37,10 +45,7 @@ export default function Revenue() {
         </p>
         <ReportState loading={loading} error={error} empty={!loading && !error && data?.length === 0} />
         {data && data.length > 0 && (
-          <Table
-            head={['Currency', 'Platform cut (minor units)', 'Harvests']}
-            rows={data.map(r => [r.currency, r.platformCut, r.harvests.toLocaleString()])}
-          />
+          <SortableTable cols={revCols} rows={data} initialSort={{ key: 'cut', dir: 'desc' }} />
         )}
       </Section>
     </div>

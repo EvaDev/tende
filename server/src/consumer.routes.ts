@@ -197,15 +197,20 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
 
     // Off-chain detail to enrich the bare on-chain events: where a top-up came from
     // (deposit_references) and the rate/fee behind a conversion (consumer_conversions).
-    const [refsRes, convRes] = await Promise.all([
+    const [refsRes, convRes, salesRes] = await Promise.all([
       db.query<{ reference: string; kind: string; source: string; credit_tx: string | null }>(
         `SELECT reference, kind, source, credit_tx FROM deposit_references WHERE LOWER(wallet) = $1`, [w]),
       db.query<{ from_amount: string; to_amount: string; rate: string; spread_bps: number; fee_amount: string; fee_currency: string; debit_tx: string | null; credit_tx: string | null }>(
         `SELECT from_amount, to_amount, rate, spread_bps, fee_amount, fee_currency, debit_tx, credit_tx FROM consumer_conversions WHERE LOWER(wallet) = $1`, [w]),
+      db.query<{ tx_hash: string | null; store_number: string | null; till_number: string | null; items: unknown; merchant_name: string | null }>(
+        `SELECT s.tx_hash, s.store_number, s.till_number, s.items, m.name AS merchant_name
+           FROM merchant_sales s LEFT JOIN merchants m ON m.merchant_id = s.merchant_id
+          WHERE LOWER(s.consumer_wallet) = $1`, [w]),
     ]);
     const refByTx = new Map(refsRes.rows.filter(r => r.credit_tx).map(r => [r.credit_tx!.toLowerCase(), r]));
     const convByCreditTx = new Map(convRes.rows.filter(c => c.credit_tx).map(c => [c.credit_tx!.toLowerCase(), c]));
     const convDebitTxs = new Set(convRes.rows.filter(c => c.debit_tx).map(c => c.debit_tx!.toLowerCase()));
+    const saleByTx = new Map(salesRes.rows.filter(s => s.tx_hash).map(s => [s.tx_hash!.toLowerCase(), s]));
 
     interface Tx {
       event_id: string; event_type: string; amount_token: string; currency: string;
@@ -244,6 +249,20 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
       } else {
         direction = (a.from ?? '').toLowerCase() === w ? 'out' : 'in';
         event_type = direction === 'out' ? 'Sent' : 'Received';
+      }
+
+      // A transfer out that matches a recorded POS purchase → show it as a Purchase
+      // with the merchant, store/till and line items.
+      const sale = saleByTx.get(txh);
+      if (sale && direction === 'out') {
+        event_type = 'Purchase';
+        detail = {
+          type: 'purchase',
+          merchant: sale.merchant_name ?? 'Merchant',
+          store: sale.store_number ?? undefined,
+          till:  sale.till_number ?? undefined,
+          items: Array.isArray(sale.items) ? sale.items : undefined,
+        };
       }
       transactions.push({ event_id: String(r.id), event_type, amount_token, currency: cur.sym, created_at: r.ts, tx_hash: r.tx_hash, direction, detail });
     }
@@ -404,15 +423,65 @@ function decimalsFor(currency: string): number {
 // Pending SafeTx store: the server holds the exact tx it built so the client
 // cannot tamper between prepare and submit. Keyed by safeTxHash. Short TTL.
 const PENDING_TTL_MS = 5 * 60 * 1000;
+
+// Optional merchant-purchase context attached to a transfer from the Buy flow. When
+// present, transfer/submit records a merchant_sales row on success.
+interface SaleContext {
+  merchantId?: string;
+  storeNumber?: string;
+  tillNumber?: string;
+  lat?: number;
+  lng?: number;
+  items?: { name: string; qty: number; unitPrice: number }[];
+}
 interface PendingTransfer {
   safeTx: SafeTx; senderWallet: string; toAddress: string;
   amount: bigint; currency: string; expiry: number;
   recipientPhone?: string;   // set only for escrow (WhatsApp) sends
+  sale?: SaleContext;        // set only for merchant purchases (Buy flow)
 }
 const pendingTransfers = new Map<string, PendingTransfer>();
 function sweepPending() {
   const now = Date.now();
   for (const [h, p] of pendingTransfers) if (p.expiry < now) pendingTransfers.delete(h);
+}
+
+// Record a completed POS purchase in the merchant sales ledger. Best-effort: the
+// on-chain payment has already settled, so a bookkeeping failure here must never
+// fail the request — it's logged and swallowed.
+async function recordMerchantSale(pending: PendingTransfer, txHash: string): Promise<void> {
+  const sale = pending.sale;
+  if (!sale) return;
+  try {
+    const merchantWallet = pending.toAddress;
+    // Resolve merchant_id (trust the wallet the payment actually went to over the
+    // client-supplied id) and the payer's @tag for readable reporting.
+    const [mRes, cRes] = await Promise.all([
+      db.query<{ merchant_id: string }>(
+        `SELECT merchant_id FROM merchants WHERE LOWER(wallet_address) = LOWER($1)`, [merchantWallet]),
+      db.query<{ ens_subdomain: string | null }>(
+        `SELECT ens_subdomain FROM consumers WHERE LOWER(wallet_address) = LOWER($1)`, [pending.senderWallet]),
+    ]);
+    const merchantId  = mRes.rows[0]?.merchant_id ?? sale.merchantId ?? null;
+    const consumerTag = cRes.rows[0]?.ens_subdomain ?? null;
+    const amountMajor = Number(ethers.formatUnits(pending.amount, decimalsFor(pending.currency)));
+    const items = Array.isArray(sale.items)
+      ? sale.items.map(i => ({ name: i.name, qty: i.qty, unitPrice: i.unitPrice, lineTotal: +(i.qty * i.unitPrice).toFixed(2) }))
+      : null;
+
+    await db.query(
+      `INSERT INTO merchant_sales
+         (merchant_id, merchant_wallet, consumer_wallet, consumer_tag, amount, currency,
+          store_number, till_number, latitude, longitude, items, tx_hash, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'paid')`,
+      [merchantId, merchantWallet, pending.senderWallet, consumerTag, amountMajor,
+       pending.currency.toUpperCase(), sale.storeNumber ?? null, sale.tillNumber ?? null,
+       Number.isFinite(sale.lat) ? sale.lat : null, Number.isFinite(sale.lng) ? sale.lng : null,
+       items ? JSON.stringify(items) : null, txHash],
+    );
+  } catch (e) {
+    console.error('[recordMerchantSale] failed (non-fatal):', (e as Error).message);
+  }
 }
 
 /// Resolve a recipient — either a 0x address or an @tag (ENS subdomain registered
@@ -443,7 +512,7 @@ async function resolveRecipient(toRaw: string): Promise<string> {
 // Returns the SafeTx hash to sign (as a base64url WebAuthn challenge) + a summary.
 router.post('/transfer/prepare', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { to, amount, currency } = req.body as { to?: string; amount?: string; currency?: string };
+    const { to, amount, currency, sale } = req.body as { to?: string; amount?: string; currency?: string; sale?: SaleContext };
     if (!to || !amount || !currency) { res.status(400).json({ error: 'Missing to, amount, or currency' }); return; }
 
     const senderWallet = req.consumer!.walletAddress;
@@ -478,6 +547,7 @@ router.post('/transfer/prepare', async (req: Request, res: Response): Promise<vo
     sweepPending();
     pendingTransfers.set(safeTxHash, {
       safeTx, senderWallet, toAddress, amount: amountUnits, currency, expiry: Date.now() + PENDING_TTL_MS,
+      sale: sale && typeof sale === 'object' ? sale : undefined,
     });
 
     res.json({
@@ -544,6 +614,7 @@ router.post('/transfer/submit', async (req: Request, res: Response): Promise<voi
     });
 
     pendingTransfers.delete(safeTxHash);
+    await recordMerchantSale(pending, txHash);   // no-op unless this was a Buy-flow purchase
     res.json({ success: true, txHash, to: pending.toAddress, amount: pending.amount.toString(), currency: pending.currency });
   } catch (err) {
     console.error('[POST /api/consumer/transfer/submit]', err);

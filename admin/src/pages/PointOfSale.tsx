@@ -22,6 +22,27 @@ export default function PointOfSale() {
   const [cart, setCart] = useState<Record<string, number>>({});
   const [charging, setCharging] = useState(false);
 
+  // Store / till identify where a sale was rung up; remembered on this device. GPS is
+  // captured (best-effort) when the charge QR opens. All of it rides in the QR payload
+  // so the consumer's payment records it against the sale.
+  const [storeNumber, setStoreNumber] = useState(() => localStorage.getItem('pos.store') ?? '');
+  const [tillNumber,  setTillNumber]  = useState(() => localStorage.getItem('pos.till')  ?? '');
+  const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
+  useEffect(() => { localStorage.setItem('pos.store', storeNumber); }, [storeNumber]);
+  useEffect(() => { localStorage.setItem('pos.till', tillNumber); }, [tillNumber]);
+
+  function openCharge() {
+    setGeo(null);
+    setCharging(true);
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => setGeo({ lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6) }),
+        () => setGeo(null),
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 300_000 },
+      );
+    }
+  }
+
   const [adding, setAdding] = useState(false);
   const [pName, setPName]   = useState('');
   const [pPrice, setPPrice] = useState('1');
@@ -44,9 +65,22 @@ export default function PointOfSale() {
     } catch (e) { setErr((e as Error).message); }
   }
 
-  // QR the customer scans in the iMali app to pay the merchant wallet.
+  // Line items in the cart → compact form for the QR payload.
+  const items = products
+    .filter(p => (cart[p.id] ?? 0) > 0)
+    .map(p => ({ n: p.name, q: cart[p.id], p: unitRand(p) }));
+
+  // QR the customer scans in the iMali app to pay the merchant wallet. Carries the
+  // store/till, GPS and line items so the payment is recorded as a sale.
   const payload = merchant
-    ? JSON.stringify({ imali: 1, to: merchant.wallet_address, amt: total.toFixed(2), cur: 'ZAR', n: merchant.name })
+    ? JSON.stringify({
+        imali: 1, to: merchant.wallet_address, amt: total.toFixed(2), cur: 'ZAR', n: merchant.name,
+        mid: merchant.merchant_id,
+        store: storeNumber.trim() || undefined,
+        till:  tillNumber.trim()  || undefined,
+        lat: geo?.lat, lng: geo?.lng,
+        items,
+      })
     : '';
 
   if (resolved && role !== 'merchant') {
@@ -62,6 +96,11 @@ export default function PointOfSale() {
           <p className="text-sm text-white/80">{merchant.name}</p>
         </div>
         <Button size="sm" onClick={() => setAdding(v => !v)}>{adding ? 'Cancel' : '+ Add product'}</Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div><Label className="text-white/80">Store number</Label><Input value={storeNumber} onChange={e => setStoreNumber(e.target.value)} placeholder="e.g. 042" /></div>
+        <div><Label className="text-white/80">Till number</Label><Input value={tillNumber} onChange={e => setTillNumber(e.target.value)} placeholder="e.g. 3" /></div>
       </div>
 
       {adding && (
@@ -102,7 +141,7 @@ export default function PointOfSale() {
         <span className="text-lg font-semibold text-gray-700">Total</span>
         <span className="text-2xl font-bold text-brand-accent">R{total.toFixed(2)}</span>
       </div>
-      <Button onClick={() => setCharging(true)} disabled={total <= 0} className="w-full">Charge R{total.toFixed(2)}</Button>
+      <Button onClick={openCharge} disabled={total <= 0} className="w-full">Charge R{total.toFixed(2)}</Button>
 
       {/* Charge QR — customer scans to pay */}
       {charging && (
@@ -113,6 +152,12 @@ export default function PointOfSale() {
             <div className="flex justify-center"><QRCodeSVG value={payload} size={200} fgColor="#3D1919" bgColor="#FFFFFF" level="M" /></div>
             <p className="text-3xl font-bold text-brand-accent">R{total.toFixed(2)}</p>
             <p className="text-xs text-gray-500">Customer pays {merchant.name} from the iMali app</p>
+            <p className="text-[11px] text-gray-400">
+              {(storeNumber || tillNumber)
+                ? `${storeNumber ? `Store ${storeNumber}` : ''}${storeNumber && tillNumber ? ' · ' : ''}${tillNumber ? `Till ${tillNumber}` : ''} · `
+                : ''}
+              {geo ? 'location captured' : 'no location'}
+            </p>
             <Button onClick={() => { setCharging(false); setCart({}); }} className="w-full">Done</Button>
           </div>
         </div>

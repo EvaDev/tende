@@ -241,6 +241,40 @@ router.get('/me/products', requireAuth, async (req: Request, res: Response): Pro
   }
 });
 
+// GET /api/merchants/me/sales — the merchant's own POS sales ledger + a per
+// store/till rollup, from the merchant_sales table (written by the Buy flow).
+router.get('/me/sales', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = await merchantIdForWallet(req.consumer!.walletAddress);
+    if (!id) { res.status(404).json({ error: 'No merchant for this wallet' }); return; }
+
+    const sales = await db.query(
+      `SELECT sale_id, amount, currency, store_number, till_number, latitude, longitude,
+              items, consumer_tag, consumer_wallet, tx_hash, status, created_at
+         FROM merchant_sales WHERE merchant_id = $1
+        ORDER BY created_at DESC LIMIT 500`,
+      [id],
+    );
+
+    const byStoreTill = await db.query(
+      `SELECT COALESCE(store_number, '—') AS store_number,
+              COALESCE(till_number, '—')  AS till_number,
+              currency,
+              count(*)::int    AS sales,
+              SUM(amount)::text AS total,
+              MAX(created_at)  AS last_sale
+         FROM merchant_sales WHERE merchant_id = $1
+        GROUP BY store_number, till_number, currency
+        ORDER BY SUM(amount) DESC`,
+      [id],
+    );
+
+    res.json({ sales: sales.rows, byStoreTill: byStoreTill.rows });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 router.post('/me/products', requireAuth, async (req: Request, res: Response): Promise<void> => {
   try {
     const m = await db.query<{ merchant_id: string; country_code: string; currency_code: string }>(

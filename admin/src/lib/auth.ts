@@ -1,16 +1,33 @@
 // Wallet-based JWT auth — sign nonce → receive JWT with role:'admin'
 import { api, setAuthToken } from './api';
 
+// Dedupe concurrent logins for the same wallet. Without this, React StrictMode's
+// double-invoked effects (and wagmi connect re-renders) fire loginWithWallet more
+// than once: each call issues a fresh server nonce, and the store keeps only the
+// last one — so the signature over an earlier nonce fails verification (401) and a
+// second MetaMask prompt appears ("User rejected"). Sharing one in-flight promise
+// per wallet guarantees a single nonce, a single prompt, and a single login POST.
+let inFlight: { addr: string; promise: Promise<{ token: string; role: string }> } | null = null;
+
 export async function loginWithWallet(
   address: string,
   signMessage: (msg: string) => Promise<string>,
 ): Promise<{ token: string; role: string }> {
-  const { message } = await api.get<{ nonce: string; message: string }>(`/api/auth/nonce?wallet=${address}`);
-  const signature    = await signMessage(message);
-  const result       = await api.post<{ token: string; role: string }>('/api/auth/login', { walletAddress: address, signature });
-  setAuthToken(result.token);
-  localStorage.setItem('auth_token', result.token);
-  return result;
+  const addr = address.toLowerCase();
+  if (inFlight && inFlight.addr === addr) return inFlight.promise;
+
+  const promise = (async () => {
+    const { message } = await api.get<{ nonce: string; message: string }>(`/api/auth/nonce?wallet=${addr}`);
+    const signature   = await signMessage(message);
+    const result      = await api.post<{ token: string; role: string }>('/api/auth/login', { walletAddress: addr, signature });
+    setAuthToken(result.token);
+    localStorage.setItem('auth_token', result.token);
+    return result;
+  })();
+
+  inFlight = { addr, promise };
+  try { return await promise; }
+  finally { inFlight = null; }
 }
 
 // Decode a JWT's `exp` (seconds) without verifying the signature. base64url-safe.

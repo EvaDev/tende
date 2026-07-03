@@ -1,4 +1,5 @@
-import { Section, Table, useReport, ReportState, shortHash, shortAddr } from './_shared';
+import { Section, useReport, ReportState, shortHash, shortAddr } from './_shared';
+import { SortableTable, type Col } from '@/components/SortableTable';
 
 interface TEvent {
   type: string;            // 'Minted' | 'Burned' | 'Asset purchase'
@@ -19,6 +20,22 @@ interface TreasuryReport { events: TEvent[]; totals: Record<string, string> }
 
 const fmt = (raw: string | undefined, dec: number) =>
   (Number(raw ?? '0') / 10 ** dec).toLocaleString(undefined, { maximumFractionDigits: dec });
+
+const cols: Col<TEvent>[] = [
+  { key: 'type', header: 'Type', sort: e => e.type, search: e => e.type, render: e => e.type },
+  { key: 'amount', header: 'Amount', sort: e => Number(e.amount) / 10 ** e.decimals,
+    render: e => e.type === 'Asset purchase'
+      ? <span>+{fmt(e.amount, e.decimals)} {e.token}<span className="text-gray-400"> for {fmt(e.spent, e.spentDecimals ?? 2)} {e.spentCurrency}</span></span>
+      : <span className={e.type === 'Burned' ? 'text-brand-danger' : 'text-brand-accent'}>{e.type === 'Burned' ? '−' : '+'}{fmt(e.amount, e.decimals)} {e.token}</span> },
+  { key: 'reference', header: 'Reference', search: e => e.reference ?? '',
+    render: e => e.reference
+      ? <span>{e.reference}<span className="ml-1 text-[10px] uppercase tracking-wide text-gray-400">{e.refSource}/{e.refKind === 'bank_deposit' ? 'bank' : e.refKind}</span></span>
+      : <span className="text-gray-400">—</span> },
+  { key: 'party', header: 'Counterparty', search: e => e.party,
+    render: e => <span className="font-mono text-[11px]">{shortAddr(e.party)}</span> },
+  { key: 'tx', header: 'Tx',
+    render: e => <a href={`https://sepolia.etherscan.io/tx/${e.txHash}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] underline hover:text-brand-accent">{shortHash(e.txHash)}</a> },
+];
 
 export default function TreasuryReport() {
   const { data, loading, error } = useReport<TreasuryReport>('/api/admin/reports/treasury');
@@ -52,20 +69,7 @@ export default function TreasuryReport() {
       <ReportState loading={loading} error={error} empty={!loading && !error && data?.events.length === 0} />
 
       {data && data.events.length > 0 && (
-        <Table
-          head={['Type', 'Amount', 'Reference', 'Counterparty', 'Tx']}
-          rows={data.events.map(e => [
-            e.type,
-            e.type === 'Asset purchase'
-              ? <span>+{fmt(e.amount, e.decimals)} {e.token}<span className="text-gray-400"> for {fmt(e.spent, e.spentDecimals ?? 2)} {e.spentCurrency}</span></span>
-              : <span className={e.type === 'Burned' ? 'text-brand-danger' : 'text-brand-accent'}>{e.type === 'Burned' ? '−' : '+'}{fmt(e.amount, e.decimals)} {e.token}</span>,
-            e.reference
-              ? <span>{e.reference}<span className="ml-1 text-[10px] uppercase tracking-wide text-gray-400">{e.refSource}/{e.refKind === 'bank_deposit' ? 'bank' : e.refKind}</span></span>
-              : <span className="text-gray-400">—</span>,
-            <span className="font-mono text-[11px]">{shortAddr(e.party)}</span>,
-            <a href={`https://sepolia.etherscan.io/tx/${e.txHash}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] underline hover:text-brand-accent">{shortHash(e.txHash)}</a>,
-          ])}
-        />
+        <SortableTable cols={cols} rows={data.events} searchable searchPlaceholder="Search reference or counterparty…" />
       )}
     </Section>
   );

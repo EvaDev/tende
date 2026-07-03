@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Section, Table, useReport, ReportState, shortHash } from './_shared';
+import { Section, useReport, ReportState, shortHash } from './_shared';
+import { SortableTable, type Col } from '@/components/SortableTable';
 
 interface ChainEvent {
   block_number: string;
@@ -11,6 +12,17 @@ interface ChainEvent {
   args: Record<string, unknown>;
 }
 interface EventsData { count: number; limit: number; offset: number; events: ChainEvent[] }
+
+const cols: Col<ChainEvent>[] = [
+  { key: 'block', header: 'Block', sort: e => Number(e.block_number), render: e => e.block_number },
+  { key: 'contract', header: 'Contract', sort: e => e.contract, search: e => e.contract, render: e => e.contract },
+  { key: 'event', header: 'Event', sort: e => e.event_name, search: e => e.event_name,
+    render: e => <span className="font-medium">{e.event_name}</span> },
+  { key: 'args', header: 'Args', search: e => JSON.stringify(e.args),
+    render: e => <code className="text-[11px] break-all text-gray-600">{JSON.stringify(e.args)}</code> },
+  { key: 'tx', header: 'Tx', search: e => e.tx_hash,
+    render: e => <span className="font-mono text-[11px]">{shortHash(e.tx_hash)}</span> },
+];
 
 export default function Events() {
   const [contract, setContract] = useState('');
@@ -43,16 +55,7 @@ export default function Events() {
 
       <ReportState loading={loading} error={error} empty={!loading && !error && data?.events.length === 0} />
       {data && data.events.length > 0 && (
-        <Table
-          head={['Block', 'Contract', 'Event', 'Args', 'Tx']}
-          rows={data.events.map(e => [
-            e.block_number,
-            e.contract,
-            <span className="font-medium">{e.event_name}</span>,
-            <code className="text-[11px] break-all text-gray-600">{JSON.stringify(e.args)}</code>,
-            <span className="font-mono text-[11px]">{shortHash(e.tx_hash)}</span>,
-          ])}
-        />
+        <SortableTable cols={cols} rows={data.events} initialSort={{ key: 'block', dir: 'desc' }} searchable searchPlaceholder="Search event, args or tx…" />
       )}
     </Section>
   );

@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label, Select } from '@/components/ui/input';
+import { SortableTable, type Col } from '@/components/SortableTable';
 import { apiFetch } from '@/lib/api';
 import { statusColor, shortAddr } from '@/lib/utils';
 import { useAccount } from 'wagmi';
@@ -75,6 +76,38 @@ export default function Merchants() {
 
   const norm = (s: string) => (STATUSES.some(o => o.value === s.toUpperCase()) ? s.toUpperCase() : 'PENDING');
 
+  const cols: Col<Merchant>[] = [
+    { key: 'icon', header: '', className: 'w-12',
+      render: m =>
+        m.icon_id != null
+          ? <img src={`/api/admin/icons/${m.icon_id}/image`} className="w-8 h-8 rounded object-contain" alt="" />
+          : <div className="w-8 h-8 rounded border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-gray-300 text-xs">?</div> },
+    { key: 'name', header: 'Name',
+      sort: m => m.name, search: m => m.name,
+      render: m => <span className="font-medium">{m.name}</span> },
+    { key: 'wallet', header: 'Wallet',
+      search: m => m.wallet_address,
+      render: m => <span className="font-mono text-xs">{shortAddr(m.wallet_address)}</span> },
+    { key: 'country', header: 'Country', sort: m => m.country_code, search: m => m.country_code,
+      render: m => m.country_code },
+    { key: 'status', header: 'Status', sort: m => m.status,
+      render: m =>
+        isAdmin ? (
+          <select
+            value={norm(m.status)}
+            disabled={savingId === m.id}
+            onChange={e => updateStatus(m.id, e.target.value)}
+            className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-accent/30 disabled:opacity-50"
+          >
+            {STATUSES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        ) : (
+          <Badge className={statusColor(m.status)}>{m.status}</Badge>
+        ) },
+    { key: 'created', header: 'Created', sort: m => m.created_at,
+      render: m => <span className="text-gray-400">{new Date(m.created_at).toLocaleDateString()}</span> },
+  ];
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -118,48 +151,13 @@ export default function Merchants() {
       )}
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b">
-            <tr>
-              {['', 'Name', 'Wallet', 'Country', 'Status', 'Created'].map((h, i) => (
-                <th key={i} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400">No merchants yet</td></tr>
-            )}
-            {rows.map(m => (
-              <tr key={m.id} className="border-b hover:bg-gray-50">
-                {/* Merchant icon (read-only — set by the merchant) */}
-                <td className="px-4 py-3 w-12">
-                  {m.icon_id != null
-                    ? <img src={`/api/admin/icons/${m.icon_id}/image`} className="w-8 h-8 rounded object-contain" alt="" />
-                    : <div className="w-8 h-8 rounded border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-gray-300 text-xs">?</div>}
-                </td>
-                <td className="px-4 py-3 font-medium">{m.name}</td>
-                <td className="px-4 py-3 font-mono text-xs">{shortAddr(m.wallet_address)}</td>
-                <td className="px-4 py-3">{m.country_code}</td>
-                <td className="px-4 py-3">
-                  {isAdmin ? (
-                    <select
-                      value={norm(m.status)}
-                      disabled={savingId === m.id}
-                      onChange={e => updateStatus(m.id, e.target.value)}
-                      className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-accent/30 disabled:opacity-50"
-                    >
-                      {STATUSES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                  ) : (
-                    <Badge className={statusColor(m.status)}>{m.status}</Badge>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-gray-400">{new Date(m.created_at).toLocaleDateString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <SortableTable
+          cols={cols}
+          rows={rows}
+          initialSort={{ key: 'created', dir: 'desc' }}
+          searchable
+          searchPlaceholder="Search name, wallet or country…"
+        />
       </Card>
     </div>
   );

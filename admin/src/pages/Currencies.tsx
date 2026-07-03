@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label, Select } from '@/components/ui/input';
+import { SortableTable, type Col } from '@/components/SortableTable';
 import { apiFetch } from '@/lib/api';
 import { useRole } from '@/hooks/useRole';
 
@@ -51,6 +52,27 @@ export default function Currencies() {
   const f = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(v => ({ ...v, [k]: e.target.value }));
 
+  const cols: Col<Currency>[] = [
+    { key: 'code', header: 'Code', sort: c => c.code, search: c => c.code,
+      render: c => <span className="font-mono font-bold">{c.code}</span> },
+    { key: 'name', header: 'Name', sort: c => c.name, search: c => c.name,
+      render: c => c.name },
+    { key: 'symbol', header: 'Symbol',
+      render: c => c.symbol },
+    { key: 'decimals', header: 'Decimals', sort: c => c.decimals,
+      render: c => c.decimals },
+    { key: 'type', header: 'Type', sort: c => c.currency_type,
+      render: c => <Badge className={badgeClass(c.currency_type)}>{c.currency_type}</Badge> },
+    { key: 'token', header: 'Token', className: 'font-mono text-xs',
+      render: c => (c.token_address ? `${c.token_address.slice(0, 10)}…` : '—') },
+    { key: 'status', header: 'Status', sort: c => (c.enabled ? 1 : 0),
+      render: c => (
+        <Badge className={c.enabled ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>
+          {c.enabled ? 'Active' : 'Inactive'}
+        </Badge>
+      ) },
+  ];
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -78,26 +100,13 @@ export default function Currencies() {
       )}
 
       <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b">
-            <tr>{['Code','Name','Symbol','Decimals','Type','Token','Status'].map(h =>
-              <th key={h} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr>
-          </thead>
-          <tbody className="divide-y">
-            {rows.length === 0 && <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">No currencies</td></tr>}
-            {rows.map(c => (
-              <tr key={c.code} className="hover:bg-gray-50">
-                <td className="px-4 py-3 font-mono font-bold">{c.code}</td>
-                <td className="px-4 py-3">{c.name}</td>
-                <td className="px-4 py-3">{c.symbol}</td>
-                <td className="px-4 py-3">{c.decimals}</td>
-                <td className="px-4 py-3"><Badge className={badgeClass(c.currency_type)}>{c.currency_type}</Badge></td>
-                <td className="px-4 py-3 font-mono text-xs">{c.token_address ? `${c.token_address.slice(0,10)}…` : '—'}</td>
-                <td className="px-4 py-3"><Badge className={c.enabled ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>{c.enabled ? 'Active' : 'Inactive'}</Badge></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <SortableTable
+          cols={cols}
+          rows={rows}
+          initialSort={{ key: 'code', dir: 'asc' }}
+          searchable
+          searchPlaceholder="Search code or name…"
+        />
       </Card>
     </div>
   );

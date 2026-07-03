@@ -173,6 +173,64 @@ export async function writeConsumerRecord({ walletAddress, countryCode, idosCred
   return row.rows[0];
 }
 
+// ── Sign-up funnel tracking ───────────────────────────────────────────────────
+// A row is written before any on-chain work and advanced as each step completes,
+// so registrations that fail (or are abandoned) mid-flow are still counted and the
+// failing step is recoverable. All writes are BEST-EFFORT — a tracking failure is
+// logged but never aborts a real registration.
+
+type RegStep = 'signer' | 'deploy' | 'idos' | 'ens' | 'pimlico' | 'db' | 'done';
+
+async function attemptInsert(a: {
+  attemptId: string; countryCode: string; ensSubdomain: string;
+  displayName: string; mobileNumber: string;
+}): Promise<void> {
+  try {
+    await db.query(
+      `INSERT INTO registration_attempts
+         (attempt_id, status, country_code, ens_subdomain, display_name, mobile_number)
+       VALUES ($1, 'started', $2, $3, $4, $5)
+       ON CONFLICT (attempt_id) DO NOTHING`,
+      [a.attemptId, a.countryCode || null, a.ensSubdomain || null, a.displayName || null, a.mobileNumber || null],
+    );
+  } catch (e) { console.error('[register] attempt insert failed (non-fatal):', (e as Error).message); }
+}
+
+async function attemptStep(attemptId: string, step: RegStep, extra?: {
+  signerAddress?: string; walletAddress?: string; txHash?: string;
+}): Promise<void> {
+  try {
+    await db.query(
+      `UPDATE registration_attempts SET
+         current_step   = $2,
+         signer_address = COALESCE($3, signer_address),
+         wallet_address = COALESCE($4, wallet_address),
+         tx_hash        = COALESCE($5, tx_hash),
+         updated_at     = NOW()
+       WHERE attempt_id = $1`,
+      [attemptId, step, extra?.signerAddress ?? null, extra?.walletAddress ?? null, extra?.txHash ?? null],
+    );
+  } catch (e) { console.error('[register] attempt step update failed (non-fatal):', (e as Error).message); }
+}
+
+async function attemptFinish(attemptId: string, status: 'completed' | 'failed', o: {
+  failedStep?: RegStep; error?: string; steps?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await db.query(
+      `UPDATE registration_attempts SET
+         status       = $2,
+         current_step = CASE WHEN $2 = 'completed' THEN 'done' ELSE current_step END,
+         failed_step  = $3,
+         error        = $4,
+         steps        = $5,
+         updated_at   = NOW()
+       WHERE attempt_id = $1`,
+      [attemptId, status, o.failedStep ?? null, o.error ?? null, o.steps ? JSON.stringify(o.steps) : null],
+    );
+  } catch (e) { console.error('[register] attempt finish failed (non-fatal):', (e as Error).message); }
+}
+
 // ── Main orchestrator ─────────────────────────────────────────────────────────
 
 interface RegisterParams {
@@ -201,90 +259,116 @@ export async function registerNewConsumer(params: RegisterParams): Promise<Regis
   const userId = crypto.randomUUID();
   const steps: Record<string, unknown> = {};
 
-  // 1. Resolve passkey signer
-  steps.signerAddress = await resolvePasskeySigner({ pubKeyX, pubKeyY, verifiers });
+  // Record the attempt before any on-chain work so a failure at any step below is
+  // still counted (see registration_attempts / the sign-up funnel report). The
+  // idOS userId doubles as the attempt id. `stage` tracks the critical step in
+  // flight so the catch can record where a hard failure occurred.
+  await attemptInsert({ attemptId: userId, countryCode, ensSubdomain, displayName, mobileNumber });
+  let stage: RegStep = 'signer';
 
-  // 2. Deploy Safe onchain
-  const { walletAddress, globalConsumerId, txHash } = await deployConsumerWallet({
-    ensSubdomain, displayName, countryCode,
-    signerAddress: steps.signerAddress as string,
-  });
-  steps.walletAddress    = walletAddress;
-  steps.globalConsumerId = globalConsumerId;
-  steps.deployTxHash     = txHash;
-
-  // Steps 3–6 are external integrations (idOS, ENS, Pimlico). They are BEST-EFFORT:
-  // a failure is logged and recorded in `steps`, but does not abort registration —
-  // the wallet (signer + Safe) and the DB record are the critical path. This keeps
-  // the pilot working while idOS issuer approval / mainnet ENS funding are pending;
-  // failed steps can be retried out-of-band. Make them strict before production.
-  let credentialId = '';
-  let accessGrantId = '';
-
-  // 3. Create idOS profile (wallet must exist first)
   try {
-    await createIdosProfile({ walletAddress, userId, userEncryptionPublicKey, ownershipProofMessage, ownershipProofSignature });
-    steps.idosUserId = userId;
+    // 1. Resolve passkey signer
+    steps.signerAddress = await resolvePasskeySigner({ pubKeyX, pubKeyY, verifiers });
+    await attemptStep(userId, 'signer', { signerAddress: steps.signerAddress as string });
 
-    // 4. Issue credential (contains all PII + ensSubdomain for recovery)
-    const cred = await issueIdosCredential({
-      userId,
-      walletAddress,
-      credentialData: {
-        firstName:    displayName.split(' ')[0] ?? displayName,
-        familyName:   displayName.split(' ').slice(1).join(' ') ?? '',
-        mobileNumber,
-        countryCode,
-        ensSubdomain,
-        kycLevel:     0,
-      },
-      dwgSignature:        dwgSignature ?? '',
-      delegatedWriteGrant: { ...delegatedWriteGrant, userEncryptionPublicKey: userEncryptionPublicKey ?? '' } as never,
+    // 2. Deploy Safe onchain
+    stage = 'deploy';
+    const { walletAddress, globalConsumerId, txHash } = await deployConsumerWallet({
+      ensSubdomain, displayName, countryCode,
+      signerAddress: steps.signerAddress as string,
     });
-    credentialId  = cred.credentialId;
-    accessGrantId = cred.accessGrantId;
-    steps.idosCredentialId  = credentialId;
-    steps.idosAccessGrantId = accessGrantId;
-  } catch (e) {
-    console.error('[register] idOS step failed (non-fatal):', (e as Error).message);
-    steps.idosError = (e as Error).message;
-  }
+    steps.walletAddress    = walletAddress;
+    steps.globalConsumerId = globalConsumerId;
+    steps.deployTxHash     = txHash;
+    await attemptStep(userId, 'deploy', { walletAddress, txHash });
 
-  // 5. Register ENS subdomain
-  if (ensSubdomain && config.ens.controllerAddress) {
+    // Steps 3–6 are external integrations (idOS, ENS, Pimlico). They are BEST-EFFORT:
+    // a failure is logged and recorded in `steps`, but does not abort registration —
+    // the wallet (signer + Safe) and the DB record are the critical path. This keeps
+    // the pilot working while idOS issuer approval / mainnet ENS funding are pending;
+    // failed steps can be retried out-of-band. Make them strict before production.
+    // (current_step still advances past them; their per-step errors live in `steps`.)
+    let credentialId = '';
+    let accessGrantId = '';
+
+    // 3. Create idOS profile (wallet must exist first)
     try {
-      await registerEnsSubdomain({ subdomain: ensSubdomain, walletAddress });
-      steps.ensRegistered = true;
+      await createIdosProfile({ walletAddress, userId, userEncryptionPublicKey, ownershipProofMessage, ownershipProofSignature });
+      steps.idosUserId = userId;
+
+      // 4. Issue credential (contains all PII + ensSubdomain for recovery)
+      const cred = await issueIdosCredential({
+        userId,
+        walletAddress,
+        credentialData: {
+          firstName:    displayName.split(' ')[0] ?? displayName,
+          familyName:   displayName.split(' ').slice(1).join(' ') ?? '',
+          mobileNumber,
+          countryCode,
+          ensSubdomain,
+          kycLevel:     0,
+        },
+        dwgSignature:        dwgSignature ?? '',
+        delegatedWriteGrant: { ...delegatedWriteGrant, userEncryptionPublicKey: userEncryptionPublicKey ?? '' } as never,
+      });
+      credentialId  = cred.credentialId;
+      accessGrantId = cred.accessGrantId;
+      steps.idosCredentialId  = credentialId;
+      steps.idosAccessGrantId = accessGrantId;
     } catch (e) {
-      console.error('[register] ENS step failed (non-fatal):', (e as Error).message);
-      steps.ensError = (e as Error).message;
+      console.error('[register] idOS step failed (non-fatal):', (e as Error).message);
+      steps.idosError = (e as Error).message;
     }
+    await attemptStep(userId, 'idos');
+
+    // 5. Register ENS subdomain
+    if (ensSubdomain && config.ens.controllerAddress) {
+      try {
+        await registerEnsSubdomain({ subdomain: ensSubdomain, walletAddress });
+        steps.ensRegistered = true;
+      } catch (e) {
+        console.error('[register] ENS step failed (non-fatal):', (e as Error).message);
+        steps.ensError = (e as Error).message;
+      }
+    }
+    await attemptStep(userId, 'ens');
+
+    // 6. Pimlico whitelist
+    try {
+      await whitelistInPaymaster({ walletAddress });
+      steps.pimlicoWhitelisted = true;
+    } catch (e) {
+      console.error('[register] Pimlico step failed (non-fatal):', (e as Error).message);
+      steps.pimlicoError = (e as Error).message;
+    }
+    await attemptStep(userId, 'pimlico');
+
+    // 7. Write DB record
+    stage = 'db';
+    const dbRow = await writeConsumerRecord({
+      walletAddress, globalConsumerId, countryCode,
+      idosUserId: userId, idosCredentialId: credentialId,
+      idosAccessGrantId: accessGrantId, ensSubdomain,
+      displayName, mobileNumber, txHash,
+    });
+    steps.consumerId = dbRow.consumer_id;
+    await attemptStep(userId, 'db');
+
+    await attemptFinish(userId, 'completed', { steps });
+
+    return {
+      success: true,
+      walletAddress,
+      globalConsumerId,
+      consumerId:   dbRow.consumer_id,
+      ensSubdomain: ensSubdomain ? `${ensSubdomain}.${config.ens.parentDomain}` : null,
+      steps,
+    };
+  } catch (err) {
+    // A hard failure in a critical step (signer / deploy / db). Best-effort steps
+    // are caught above and never reach here. Record where it broke, then re-throw
+    // so the route still surfaces the error to the caller.
+    await attemptFinish(userId, 'failed', { failedStep: stage, error: (err as Error).message, steps });
+    throw err;
   }
-
-  // 6. Pimlico whitelist
-  try {
-    await whitelistInPaymaster({ walletAddress });
-    steps.pimlicoWhitelisted = true;
-  } catch (e) {
-    console.error('[register] Pimlico step failed (non-fatal):', (e as Error).message);
-    steps.pimlicoError = (e as Error).message;
-  }
-
-  // 7. Write DB record
-  const dbRow = await writeConsumerRecord({
-    walletAddress, globalConsumerId, countryCode,
-    idosUserId: userId, idosCredentialId: credentialId,
-    idosAccessGrantId: accessGrantId, ensSubdomain,
-    displayName, mobileNumber, txHash,
-  });
-  steps.consumerId = dbRow.consumer_id;
-
-  return {
-    success: true,
-    walletAddress,
-    globalConsumerId,
-    consumerId:   dbRow.consumer_id,
-    ensSubdomain: ensSubdomain ? `${ensSubdomain}.${config.ens.parentDomain}` : null,
-    steps,
-  };
 }

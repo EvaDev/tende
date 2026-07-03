@@ -66,11 +66,18 @@ export const config = {
     get webAuthnVerifiers(): bigint { return BigInt(this.p256Verifier as string); },
   },
 
-  // WebAuthn relying party — must match the consumer app's origin/host.
+  // WebAuthn relying party — must match the calling app's origin/host. Now two
+  // apps do WebAuthn ceremonies (consumer:5173, merchant:5175), so this accepts
+  // a comma-separated list; `origin` (singular) stays as the first entry for
+  // call sites that just need one canonical URL (e.g. building a claim link).
   webauthn: {
     rpId:   optional('WEBAUTHN_RP_ID', 'localhost'),
     rpName: optional('WEBAUTHN_RP_NAME', 'iMali'),
-    origin: optional('WEBAUTHN_ORIGIN', 'http://localhost:5173'),
+    get origins(): string[] {
+      return optional('WEBAUTHN_ORIGIN', 'http://localhost:5173,http://localhost:5175')
+        .split(',').map(s => s.trim()).filter(Boolean);
+    },
+    get origin(): string { return this.origins[0]; },
   },
 
   pimlico: {

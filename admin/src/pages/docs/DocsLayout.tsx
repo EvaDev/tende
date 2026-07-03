@@ -10,6 +10,7 @@ const SUB_NAV = [
   { to: 'concepts',  label: 'Concepts' },
   { to: 'payments',  label: 'Payments' },
   { to: 'gas-fees',  label: 'Gas fees' },
+  { to: 'merchant',  label: 'Merchant' },
   { to: 'contracts', label: 'Contracts' },
   { to: 'functions', label: 'Functions' },
   { to: 'events',    label: 'Events & Reporting' },

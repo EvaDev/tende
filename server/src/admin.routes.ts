@@ -5,7 +5,7 @@ import express, { Request, Response } from 'express';
 import { ethers } from 'ethers';
 import db from './db.js';
 import config from './config.js';
-import { requireAdmin } from './admin.middleware.js';
+import { requireAdmin, allowPublicPage } from './admin.middleware.js';
 import dexQuoteService from './dexQuoteService.js';
 import { getHarvestableYield, harvestYield, mintUsdcToVault } from './treasuryService.js';
 import { reclaimExpiredClaims } from './escrowService.js';
@@ -25,9 +25,20 @@ const PUBLIC_ADMIN_READS = new Set([
   '/stats', '/merchants', '/products', '/consumers',
   '/countries', '/currencies', '/kyc-levels', '/icons',
 ]);
+// GET reads whose auth is decided downstream by allowPublicPage (page-level opt-in
+// via app.public_pages). They must bypass this blanket admin guard so their per-route
+// middleware runs — that middleware still falls back to requireAdmin when the page
+// isn't public, so auth is preserved. `/reports` also falls through to the separate
+// reports router mounted at /api/admin/reports.
+const PAGE_GATED_READS = (path: string) =>
+  path.startsWith('/reports') ||
+  path === '/contract-deployments' ||
+  path === '/assets' ||
+  path === '/asset-metadata';
 router.use((req: Request, res: Response, next): void => {
   const isPublicRead = req.method === 'GET' && (
     PUBLIC_ADMIN_READS.has(req.path) ||
+    PAGE_GATED_READS(req.path) ||       // defer to per-route allowPublicPage
     req.path.startsWith('/icons/') ||   // icon image bytes
     req.path.startsWith('/logs')   ||   // live SSE log feed + history
     /\/logo$/.test(req.path)            // merchant logo image
@@ -96,7 +107,7 @@ router.post('/harvest', requireAdmin, async (req: Request, res: Response): Promi
 const ERC1967_IMPL_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
 const VERSION_ABI = ['function VERSION() view returns (string)'];
 
-router.get('/contract-deployments', requireAdmin, async (_req: Request, res: Response): Promise<void> => {
+router.get('/contract-deployments', allowPublicPage('contracts'), async (_req: Request, res: Response): Promise<void> => {
   try {
     const rows = (await db.query(
       `SELECT contract_name, proxy_address, impl_address, version, chain_id, deploy_tx, deployed_at, notes
@@ -139,7 +150,7 @@ function rpcForChain(chainId: number): string {
 }
 
 // Read ERC-20 metadata so the admin doesn't have to type symbol/name/decimals.
-router.get('/asset-metadata', requireAdmin, async (req: Request, res: Response): Promise<void> => {
+router.get('/asset-metadata', allowPublicPage('assets'), async (req: Request, res: Response): Promise<void> => {
   const address = String(req.query.address ?? '');
   const chainId = parseInt(String(req.query.chainId ?? config.chain.chainId));
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) { res.status(400).json({ error: 'Invalid address' }); return; }
@@ -154,7 +165,7 @@ router.get('/asset-metadata', requireAdmin, async (req: Request, res: Response):
 });
 
 // List all assets (admin view — includes disabled, enriched with live DEX price).
-router.get('/assets', requireAdmin, async (_req: Request, res: Response): Promise<void> => {
+router.get('/assets', allowPublicPage('assets'), async (_req: Request, res: Response): Promise<void> => {
   const r = await db.query<Record<string, unknown>>(
     `SELECT * FROM tradeable_assets ORDER BY sort_order, symbol`,
   );
