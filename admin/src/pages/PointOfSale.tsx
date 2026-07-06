@@ -7,6 +7,7 @@ import { X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useRole } from '@/hooks/useRole';
 import { useMerchant } from '@/hooks/useMerchant';
+import { useAppName } from '@/hooks/useAppConfig';
 
 interface Product { id: string; name: string; price: string; currency_code: string; is_active?: boolean }
 
@@ -17,6 +18,7 @@ interface Product { id: string; name: string; price: string; currency_code: stri
 export default function PointOfSale() {
   const { role, resolved } = useRole();
   const { merchant } = useMerchant(role === 'merchant');
+  const appName = useAppName();
 
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<Record<string, number>>({});
@@ -151,7 +153,7 @@ export default function PointOfSale() {
             <p className="font-semibold text-brand-accent">Scan to pay</p>
             <div className="flex justify-center"><QRCodeSVG value={payload} size={200} fgColor="#3D1919" bgColor="#FFFFFF" level="M" /></div>
             <p className="text-3xl font-bold text-brand-accent">R{total.toFixed(2)}</p>
-            <p className="text-xs text-gray-500">Customer pays {merchant.name} from the iMali app</p>
+            <p className="text-xs text-gray-500">Customer pays {merchant.name} from the {appName} app</p>
             <p className="text-[11px] text-gray-400">
               {(storeNumber || tillNumber)
                 ? `${storeNumber ? `Store ${storeNumber}` : ''}${storeNumber && tillNumber ? ' · ' : ''}${tillNumber ? `Till ${tillNumber}` : ''} · `

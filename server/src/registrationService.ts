@@ -22,6 +22,7 @@ import config         from './config.js';
 import idosService    from './idosService.js';
 import { ensService } from './ensService.js';
 import { pimlicoService } from './pimlicoService.js';
+import { recordGasFromReceipt } from './gasCostService.js';
 import type { RegistrationResult } from './types.js';
 
 const CONSUMER_ABI = [
@@ -62,7 +63,8 @@ export async function resolvePasskeySigner({ pubKeyX, pubKeyY, verifiers }: {
   const code = await getProvider().getCode(signerAddress);
   if (code === '0x') {
     const tx = await factory.createSigner(pubKeyX, pubKeyY, verifiers);
-    await tx.wait();
+    const receipt = await tx.wait() as ethers.TransactionReceipt;
+    await recordGasFromReceipt(receipt, 'register_signer');
   }
   return signerAddress;
 }
@@ -84,6 +86,7 @@ export async function deployConsumerWallet({ ensSubdomain, displayName, countryC
 
   const tx      = await consumer.registerConsumer(ensHash, nameHash, countryHash, 0, signerAddress);
   const receipt = await tx.wait() as ethers.TransactionReceipt;
+  await recordGasFromReceipt(receipt, 'register_deploy');
 
   // The receipt also carries the Safe ProxyCreation log; parseLog returns null
   // (not throws) for logs outside CONSUMER_ABI, so match on a non-null parse AND

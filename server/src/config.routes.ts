@@ -7,6 +7,8 @@ import express, { Request, Response } from 'express';
 import db from './db.js';
 import { requireAdmin } from './admin.middleware.js';
 import ensService from './ensService.js';
+import { invalidateRevenueConfigCache } from './revenueConfig.js';
+import { invalidateAppBrandCache } from './appBrand.js';
 
 const router = express.Router();
 
@@ -45,6 +47,9 @@ router.patch('/:key', requireAdmin, async (req: Request, res: Response): Promise
     [value, key]
   );
   if (result.rowCount === 0) { res.status(404).json({ error: 'key not found' }); return; }
+  const keyStr = String(key);
+  if (keyStr.startsWith('revenue.')) invalidateRevenueConfigCache();
+  if (keyStr === 'app.name' || keyStr === 'app.logo') invalidateAppBrandCache();
   res.json(result.rows[0]);
 });
 

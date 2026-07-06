@@ -9,6 +9,7 @@ import { statusColor, shortAddr } from '@/lib/utils';
 import { useAccount } from 'wagmi';
 import { useRole } from '@/hooks/useRole';
 import { ConnectPrompt } from '@/components/ConnectPrompt';
+import { MerchantLogo } from '@/components/MerchantLogo';
 
 interface Merchant {
   id: string;
@@ -78,10 +79,7 @@ export default function Merchants() {
 
   const cols: Col<Merchant>[] = [
     { key: 'icon', header: '', className: 'w-12',
-      render: m =>
-        m.icon_id != null
-          ? <img src={`/api/admin/icons/${m.icon_id}/image`} className="w-8 h-8 rounded object-contain" alt="" />
-          : <div className="w-8 h-8 rounded border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-gray-300 text-xs">?</div> },
+      render: m => <MerchantLogo merchantId={m.id} iconId={m.icon_id} name={m.name} /> },
     { key: 'name', header: 'Name',
       sort: m => m.name, search: m => m.name,
       render: m => <span className="font-medium">{m.name}</span> },

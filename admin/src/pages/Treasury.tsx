@@ -3,6 +3,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { apiFetch, api } from '@/lib/api';
 import { useRole } from '@/hooks/useRole';
+import MerchantSettlementsPanel from '@/components/MerchantSettlementsPanel';
 
 interface SupplyRow { token: string; label: string; address: string; decimals: number; supply: string; kind: 'treasury' | 'vault'; }
 interface TreasuryInfo {
@@ -307,6 +308,8 @@ export default function Treasury() {
           </table>
         </div>
       </Card>
+
+      {isAdmin && <MerchantSettlementsPanel compact />}
 
       {isAdmin && <HarvestPanel />}
 

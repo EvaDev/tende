@@ -14,6 +14,7 @@ export interface PreparedTransfer {
   to: string;          // resolved recipient wallet
   amount: string;      // echoed back (display)
   currency: string;
+  charge?: { amount: string; currency: string; fxRate?: number };
   nonce: string;
 }
 
@@ -29,11 +30,15 @@ export interface TransferResult {
 // records it in the merchant sales ledger. Ignored for ordinary P2P sends.
 export interface SalePayload {
   merchantId?: string;
+  productId?: string;
+  storeId?: string;
   storeNumber?: string;
   tillNumber?: string;
   lat?: number;
   lng?: number;
   items?: { name: string; qty: number; unitPrice: number }[];
+  chargeAmount?: string;
+  chargeCurrency?: string;
 }
 
 /// Step 1 — ask the backend to build the transfer and return the hash to sign.

@@ -7,9 +7,8 @@ import {Vault} from "../src/Vault.sol";
 
 /// @title UpgradeVault
 /// @notice Upgrades ONLY the Vault UUPS proxy to the current implementation
-///         (v1.2.0 — P2P transfer gate now accepts any registered consumer,
-///         Level 0+). No reinit and no re-wiring: the gate change adds no storage
-///         and consumerContract / trustedCounterparty are already set on-chain.
+///         (v1.3.0 — platformReserveAssets excludes admin mint from harvestable
+///         yield; recordPlatformReserve called after Buy USDC). No reinit.
 ///
 ///         Broadcast from the owner wallet (DEPLOYER_ADMIN_ADDRESS), which holds
 ///         DEFAULT_ADMIN_ROLE on the proxy (authorises _authorizeUpgrade):

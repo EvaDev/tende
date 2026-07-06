@@ -10,8 +10,13 @@ import express, { Request, Response } from 'express';
 import { ethers } from 'ethers';
 import config from './config.js';
 import db     from './db.js';
+import { getAppDisplayName } from './appBrand.js';
 import { requireAuth } from './auth.middleware.js';
 import type { KycLevelRow } from './types.js';
+import { fromMinorUnits } from './productHelpers.js';
+import { spendCurrencyForCountry } from './currencyHelper.js';
+import { resolveStoreTill } from './salesLabels.js';
+import { executeConversion } from './conversionService.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -73,11 +78,61 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// ── GET /api/consumer/products ────────────────────────────────────────────────
+// Browseable catalogue for the Buy screen: active products from active merchants
+// in the consumer's country. In-person (DIRECT) products are POS-only — excluded.
+router.get('/products', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const cRes = await db.query<{ country_code: string }>(
+      `SELECT country_code FROM consumers WHERE consumer_id = $1`, [req.consumer!.consumerId]);
+    const country = cRes.rows[0]?.country_code?.toUpperCase();
+    if (!country) { res.status(400).json({ error: 'Consumer country not set' }); return; }
+
+    const r = await db.query(
+      `SELECT p.product_id AS id, p.name, p.description, p.delivery_type,
+              p.is_fixed_price, p.price, p.min_price, p.max_price, p.currency_code,
+              m.merchant_id, m.name AS merchant_name, m.wallet_address
+         FROM products p
+         JOIN merchants m ON m.merchant_id = p.merchant_id
+        WHERE p.is_active = TRUE AND m.is_active = TRUE
+          AND p.country_code = $1
+          AND p.delivery_type NOT IN ('DIRECT', 'VOUCHER')
+        ORDER BY m.name, p.name`,
+      [country],
+    );
+
+    res.json(r.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      description: row.description ?? null,
+      deliveryType: row.delivery_type,
+      isFixedPrice: row.is_fixed_price,
+      price: fromMinorUnits(row.price as string | null),
+      minAmount: fromMinorUnits(row.min_price as string | null),
+      maxAmount: fromMinorUnits(row.max_price as string | null),
+      currency: row.currency_code,
+      merchantId: row.merchant_id,
+      merchantName: row.merchant_name,
+      walletAddress: row.wallet_address,
+    })));
+  } catch (err) {
+    console.error('[GET /api/consumer/products]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // ── GET /api/consumer/balance ─────────────────────────────────────────────────
 
 router.get('/balance', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { walletAddress } = req.consumer!;
+    const { walletAddress, consumerId } = req.consumer!;
+
+    const countryRes = await db.query<{ country_code: string }>(
+      `SELECT country_code FROM consumers WHERE consumer_id = $1`, [consumerId],
+    );
+    const spendMeta = await spendCurrencyForCountry(countryRes.rows[0]?.country_code ?? 'ZA');
+    const spendCode = spendMeta.currency;
+    const spendDec  = spendMeta.decimals;
 
     const coinsResult = await db.query<{
       internal_code: string;
@@ -129,15 +184,19 @@ router.get('/balance', async (req: Request, res: Response): Promise<void> => {
         }),
     );
 
-    // The consumer's SPENDABLE balance is the Vault unified-ledger claim (where
-    // deposits/top-ups/transfers land), NOT the ERC-20 token balanceOf (the tokens
-    // sit in the Vault/treasury as backing). Prepend the Vault ZAR (and any USDC)
-    // claim so the app shows what the consumer can actually spend. ZAR = 2 dp.
+    // Home fiat + universal ZAR (TTZA-backed) + USD legs on the vault unified ledger.
     const vaultEntries: Array<Record<string, unknown>> = [];
-    let zarRaw = 0n, usdcRaw = 0n;
-    try { zarRaw  = await unifiedBalanceOf(walletAddress, 'ZAR');  } catch { /* vault unreachable */ }
-    try { usdcRaw = await unifiedBalanceOf(walletAddress, 'USDC'); } catch { /* ignore */ }
-    // Always surface both legs so the app can show a split R / $ balance (even $0.00).
+    let spendRaw = 0n, zarRaw = 0n, usdcRaw = 0n;
+    try { spendRaw = await unifiedBalanceOf(walletAddress, spendCode); } catch { /* vault unreachable */ }
+    try { zarRaw   = await unifiedBalanceOf(walletAddress, 'ZAR');     } catch { /* ignore */ }
+    try { usdcRaw  = await unifiedBalanceOf(walletAddress, 'USDC');     } catch { /* ignore */ }
+
+    if (spendCode !== 'ZAR') {
+      vaultEntries.push({
+        token: spendCode, symbol: spendMeta.symbol, decimals: spendDec, baseCurrency: spendCode, isTreasury: false,
+        raw: spendRaw.toString(), formatted: ethers.formatUnits(spendRaw, spendDec), source: 'vault',
+      });
+    }
     vaultEntries.push({
       token: 'ZAR', symbol: 'R', decimals: 2, baseCurrency: 'ZAR', isTreasury: false,
       raw: zarRaw.toString(), formatted: ethers.formatUnits(zarRaw, 2), source: 'vault',
@@ -147,19 +206,29 @@ router.get('/balance', async (req: Request, res: Response): Promise<void> => {
       raw: usdcRaw.toString(), formatted: ethers.formatUnits(usdcRaw, 6), source: 'vault',
     });
 
-    // Grand total in the consumer's local currency (Phase 1: ZAR). The USD leg is
-    // converted at the live rate; if FX is unavailable we fall back to the ZAR leg.
-    let fxUsdToZar: number | null = null;
-    try { const q = await fxService.getRate('USD', 'ZAR'); fxUsdToZar = q.rate; } catch { /* ignore */ }
-    const zarF     = Number(zarRaw) / 100;
-    const usdF     = Number(usdcRaw) / 1e6;
-    const grandZar = fxUsdToZar != null ? zarF + usdF * fxUsdToZar : zarF;
+    let fxUsdToLocal: number | null = null;
+    let fxZarToLocal: number | null = null;
+    try { const q = await fxService.getRate('USD', spendCode); fxUsdToLocal = q.rate; } catch { /* ignore */ }
+    if (spendCode !== 'ZAR') {
+      try { const q = await fxService.getRate('ZAR', spendCode); fxZarToLocal = q.rate; } catch { /* ignore */ }
+    }
+    const spendF = Number(spendRaw) / 10 ** spendDec;
+    const zarF   = Number(zarRaw) / 100;
+    const usdF   = Number(usdcRaw) / 1e6;
+    const grandLocal = spendCode === 'ZAR'
+      ? zarF + (fxUsdToLocal != null ? usdF * fxUsdToLocal : 0)
+      : spendF + (fxZarToLocal != null ? zarF * fxZarToLocal : 0) + (fxUsdToLocal != null ? usdF * fxUsdToLocal : 0);
+
     const summary = {
-      localCurrency: 'ZAR', localSymbol: 'R',
-      zar: { raw: zarRaw.toString(),  formatted: zarF.toFixed(2) },
+      localCurrency: spendCode,
+      localSymbol: spendMeta.symbol,
+      hasSeparateZar: spendCode !== 'ZAR',
+      spend: { currency: spendCode, raw: spendRaw.toString(), formatted: spendF.toFixed(spendDec) },
+      zar: { currency: 'ZAR', raw: zarRaw.toString(), formatted: zarF.toFixed(2) },
       usd: { raw: usdcRaw.toString(), formatted: usdF.toFixed(2) },
-      fxUsdToZar,
-      grandTotalLocal: grandZar.toFixed(2),
+      fxUsdToLocal,
+      fxZarToLocal,
+      grandTotalLocal: grandLocal.toFixed(spendDec),
     };
 
     res.json({ walletAddress, balances: [...vaultEntries, ...balances], summary });
@@ -179,14 +248,18 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
 
     // The indexer projects on-chain logs into chain_events. Surface this wallet's
     // ledger moves: Credited = top-up/in, Debited = out, Transferred = P2P in/out.
+    // Fetch a generous window from the indexer, then merge with off-chain sales and
+    // paginate in-memory. Purchases land in merchant_sales immediately on payment;
+    // chain_events can lag by several blocks + indexer poll interval.
+    const fetchLimit = Math.min(limit + offset + 50, 150);
     const result = await db.query<{ id: string; event_name: string; args: Record<string, string>; ts: string; tx_hash: string }>(
       `SELECT id, event_name, args, COALESCE(block_time, created_at) AS ts, tx_hash
          FROM chain_events
         WHERE event_name IN ('Credited','Debited','Transferred')
           AND ( lower(args->>'user') = $1 OR lower(args->>'from') = $1 OR lower(args->>'to') = $1 )
         ORDER BY block_number DESC, log_index DESC
-        LIMIT $2 OFFSET $3`,
-      [w, limit, offset],
+        LIMIT $2`,
+      [w, fetchLimit],
     );
 
     // currencyCode is stored as the indexed bytes32 hash; map known ones to symbol/decimals.
@@ -197,20 +270,32 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
 
     // Off-chain detail to enrich the bare on-chain events: where a top-up came from
     // (deposit_references) and the rate/fee behind a conversion (consumer_conversions).
-    const [refsRes, convRes, salesRes] = await Promise.all([
+    const [refsRes, convRes, salesRes, changeRes] = await Promise.all([
       db.query<{ reference: string; kind: string; source: string; credit_tx: string | null }>(
         `SELECT reference, kind, source, credit_tx FROM deposit_references WHERE LOWER(wallet) = $1`, [w]),
-      db.query<{ from_amount: string; to_amount: string; rate: string; spread_bps: number; fee_amount: string; fee_currency: string; debit_tx: string | null; credit_tx: string | null }>(
-        `SELECT from_amount, to_amount, rate, spread_bps, fee_amount, fee_currency, debit_tx, credit_tx FROM consumer_conversions WHERE LOWER(wallet) = $1`, [w]),
-      db.query<{ tx_hash: string | null; store_number: string | null; till_number: string | null; items: unknown; merchant_name: string | null }>(
-        `SELECT s.tx_hash, s.store_number, s.till_number, s.items, m.name AS merchant_name
+      db.query<{ from_currency: string; to_currency: string; from_amount: string; to_amount: string; rate: string; spread_bps: number; fee_amount: string; fee_currency: string; reference: string | null; debit_tx: string | null; credit_tx: string | null }>(
+        `SELECT from_currency, to_currency, from_amount, to_amount, rate, spread_bps, fee_amount, fee_currency, reference, debit_tx, credit_tx FROM consumer_conversions WHERE LOWER(wallet) = $1`, [w]),
+      db.query<{ sale_id: number; tx_hash: string | null; amount: string; currency: string; created_at: string; store_number: string | null; till_number: string | null; items: unknown; merchant_name: string | null }>(
+        `SELECT s.sale_id, s.tx_hash, s.amount, s.currency, s.created_at,
+                s.store_number, s.till_number, s.items, m.name AS merchant_name
            FROM merchant_sales s LEFT JOIN merchants m ON m.merchant_id = s.merchant_id
-          WHERE LOWER(s.consumer_wallet) = $1`, [w]),
+          WHERE LOWER(s.consumer_wallet) = $1
+          ORDER BY s.created_at DESC
+          LIMIT 100`, [w]),
+      db.query<{ voucher_id: string; amount: string; currency: string; credit_tx: string | null; claimed_at: string | null; created_at: string; merchant_name: string | null; store_number: string | null; till_number: string | null; delivery_mode: string }>(
+        `SELECT v.voucher_id, v.amount, v.currency, v.credit_tx, v.claimed_at, v.created_at,
+                v.store_number, v.till_number, v.delivery_mode, m.name AS merchant_name
+           FROM change_vouchers v
+           LEFT JOIN merchants m ON m.merchant_id = v.merchant_id
+          WHERE LOWER(v.recipient_wallet) = $1 AND v.status = 'claimed'
+          ORDER BY COALESCE(v.claimed_at, v.created_at) DESC
+          LIMIT 100`, [w]),
     ]);
     const refByTx = new Map(refsRes.rows.filter(r => r.credit_tx).map(r => [r.credit_tx!.toLowerCase(), r]));
     const convByCreditTx = new Map(convRes.rows.filter(c => c.credit_tx).map(c => [c.credit_tx!.toLowerCase(), c]));
     const convDebitTxs = new Set(convRes.rows.filter(c => c.debit_tx).map(c => c.debit_tx!.toLowerCase()));
     const saleByTx = new Map(salesRes.rows.filter(s => s.tx_hash).map(s => [s.tx_hash!.toLowerCase(), s]));
+    const changeByTx = new Map(changeRes.rows.filter(c => c.credit_tx).map(c => [c.credit_tx!.toLowerCase(), c]));
 
     interface Tx {
       event_id: string; event_type: string; amount_token: string; currency: string;
@@ -232,18 +317,45 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
 
       const conv = r.event_name === 'Credited' ? convByCreditTx.get(txh) : undefined;
       if (conv) {
-        direction = 'in'; event_type = 'Converted to USD';
-        detail = {
-          type: 'conversion',
-          from: `R${ethers.formatUnits(BigInt(conv.from_amount), 2)}`,
-          to:   `$${ethers.formatUnits(BigInt(conv.to_amount), 6)}`,
-          rate: `${Number(conv.rate).toFixed(4)} $/R`,
-          fee:  `R${ethers.formatUnits(BigInt(conv.fee_amount), 2)} (${(conv.spread_bps / 100).toFixed(2)}%)`,
-        };
+        direction = 'in';
+        const isZarToUsd = conv.from_currency === 'ZAR';
+        event_type = isZarToUsd ? 'Converted to USD' : 'Converted to ZAR';
+        if (isZarToUsd) {
+          detail = {
+            type: 'conversion',
+            reference: conv.reference ?? undefined,
+            from: `R${ethers.formatUnits(BigInt(conv.from_amount), 2)}`,
+            to:   `$${ethers.formatUnits(BigInt(conv.to_amount), 6)}`,
+            rate: `${Number(conv.rate).toFixed(4)} $/R`,
+            fee:  `R${ethers.formatUnits(BigInt(conv.fee_amount), 2)} (${(conv.spread_bps / 100).toFixed(2)}%)`,
+          };
+        } else {
+          detail = {
+            type: 'conversion',
+            reference: conv.reference ?? undefined,
+            from: `$${ethers.formatUnits(BigInt(conv.from_amount), 6)}`,
+            to:   `R${ethers.formatUnits(BigInt(conv.to_amount), 2)}`,
+            rate: `${Number(conv.rate).toFixed(2)} R/$`,
+            fee:  `$${ethers.formatUnits(BigInt(conv.fee_amount), 6)} (${(conv.spread_bps / 100).toFixed(2)}%)`,
+          };
+        }
       } else if (r.event_name === 'Credited') {
-        direction = 'in'; event_type = 'Top up';
-        const ref = refByTx.get(txh);
-        if (ref) detail = { type: 'topup', source: ref.source === 'consumer' ? 'Voucher' : 'Bank deposit', reference: ref.reference };
+        const change = changeByTx.get(txh);
+        if (change) {
+          direction = 'in';
+          event_type = 'Change voucher';
+          detail = {
+            type: 'change_voucher',
+            merchant: change.merchant_name ?? 'Store',
+            store: change.store_number ?? undefined,
+            till: change.till_number ?? undefined,
+            delivery: change.delivery_mode,
+          };
+        } else {
+          direction = 'in'; event_type = 'Top up';
+          const ref = refByTx.get(txh);
+          if (ref) detail = { type: 'topup', source: ref.source === 'consumer' ? 'Voucher' : 'Bank deposit', reference: ref.reference };
+        }
       } else if (r.event_name === 'Debited') {
         direction = 'out'; event_type = 'Payment';
       } else {
@@ -267,7 +379,59 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
       transactions.push({ event_id: String(r.id), event_type, amount_token, currency: cur.sym, created_at: r.ts, tx_hash: r.tx_hash, direction, detail });
     }
 
-    res.json({ transactions, limit, offset, count: transactions.length });
+    // Purchases recorded in merchant_sales before the indexer catches up (or if the
+    // indexer started forward-only and missed a block). Dedupe by tx_hash.
+    const seenTx = new Set(transactions.map(t => t.tx_hash.toLowerCase()));
+    for (const sale of salesRes.rows) {
+      if (!sale.tx_hash) continue;
+      const txh = sale.tx_hash.toLowerCase();
+      if (seenTx.has(txh)) continue;
+      seenTx.add(txh);
+      transactions.push({
+        event_id:    `sale-${sale.sale_id}`,
+        event_type:  'Purchase',
+        amount_token: Number(sale.amount).toFixed(2),
+        currency:    sale.currency?.toUpperCase() ?? 'ZAR',
+        created_at:  sale.created_at,
+        tx_hash:     sale.tx_hash,
+        direction:   'out',
+        detail: {
+          type: 'purchase',
+          merchant: sale.merchant_name ?? 'Merchant',
+          store: sale.store_number ?? undefined,
+          till:  sale.till_number ?? undefined,
+          items: Array.isArray(sale.items) ? sale.items : undefined,
+        },
+      });
+    }
+
+    for (const cv of changeRes.rows) {
+      if (!cv.credit_tx) continue;
+      const txh = cv.credit_tx.toLowerCase();
+      if (seenTx.has(txh)) continue;
+      seenTx.add(txh);
+      transactions.push({
+        event_id: `change-${cv.voucher_id}`,
+        event_type: 'Change voucher',
+        amount_token: Number(cv.amount).toFixed(2),
+        currency: cv.currency?.toUpperCase() ?? 'ZAR',
+        created_at: cv.claimed_at ?? cv.created_at,
+        tx_hash: cv.credit_tx,
+        direction: 'in',
+        detail: {
+          type: 'change_voucher',
+          merchant: cv.merchant_name ?? 'Store',
+          store: cv.store_number ?? undefined,
+          till: cv.till_number ?? undefined,
+          delivery: cv.delivery_mode,
+        },
+      });
+    }
+
+    transactions.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const paged = transactions.slice(offset, offset + limit);
+
+    res.json({ transactions: paged, limit, offset, count: paged.length });
   } catch (err) {
     console.error('[GET /api/consumer/transactions]', err);
     res.status(500).json({ error: (err as Error).message });
@@ -324,76 +488,27 @@ router.post('/redeem-voucher', async (req: Request, res: Response): Promise<void
 });
 
 // ── POST /api/consumer/convert ────────────────────────────────────────────────
-// ZAR → USD on-ramp (Phase 1). Burns the consumer's ZAR Vault claim and credits a
-// USD claim at the live FX rate minus the platform spread. The platform is the
-// principal counterparty here (the spread is its revenue), and the USD claim is
-// backed by the platform's USDC reserve in the Vault — so we gate on that reserve.
-// Custodial ledger move (backend adminDebit/adminCredit); not user-signed.
-const FX_SPREAD_BPS = Math.max(0, Number(process.env['PLATFORM_FX_SPREAD_BPS'] ?? 150)); // default 1.5%
+// ZAR ↔ USD and home-fiat ↔ USD on the vault unified ledger. No treasury-to-treasury.
 router.post('/convert', async (req: Request, res: Response): Promise<void> => {
   try {
     const { amount, from = 'ZAR', to = 'USD' } = req.body as { amount?: string; from?: string; to?: string };
-    if ((from || '').toUpperCase() !== 'ZAR' || !['USD', 'USDC'].includes((to || '').toUpperCase())) {
-      res.status(400).json({ error: 'Only ZAR → USD conversion is supported' }); return;
-    }
     const wallet = req.consumer!.walletAddress;
     if (!amount) { res.status(400).json({ error: 'amount required' }); return; }
-    let zarUnits: bigint;
-    try { zarUnits = ethers.parseUnits(String(amount), 2); } catch { res.status(400).json({ error: 'Invalid amount' }); return; }
-    if (zarUnits <= 0n) { res.status(400).json({ error: 'Amount must be positive' }); return; }
 
     if (!(await isRegisteredConsumer(wallet))) {
       res.status(403).json({ error: 'Your account is not registered yet', code: 'SENDER_UNREGISTERED' }); return;
     }
 
-    const zarBal = await unifiedBalanceOf(wallet, 'ZAR');
-    if (zarBal < zarUnits) { res.status(409).json({ error: 'Insufficient ZAR balance', code: 'INSUFFICIENT_BALANCE' }); return; }
-
-    const quote = await fxService.getRate('ZAR', 'USD'); // USD per 1 ZAR
-    if (quote.rate == null || quote.rate <= 0) {
-      res.status(503).json({ error: 'FX rate is unavailable right now — please try again shortly', code: 'FX_UNAVAILABLE' }); return;
-    }
-
-    // USD out = ZAR × (USD per ZAR) × (1 − spread). ZAR is 2dp, USDC is 6dp.
-    const zarFloat  = Number(zarUnits) / 100;
-    const usdNet    = zarFloat * quote.rate * (1 - FX_SPREAD_BPS / 10_000);
-    const usdcUnits = BigInt(Math.floor(usdNet * 1e6));
-    if (usdcUnits <= 0n) { res.status(400).json({ error: 'Amount is too small to convert' }); return; }
-
-    // Gate on the platform USDC reserve. NOTE (POC): this checks the reserve against
-    // THIS conversion only, not cumulative USD claims — fine while this is the sole
-    // USD on-ramp and the admin pre-funds the reserve. Phase-2: track total claims.
-    const reserve = await usdcReserveUnits();
-    if (reserve < usdcUnits) {
-      res.status(409).json({ error: 'USD reserve is temporarily low — try a smaller amount or again later', code: 'RESERVE_LOW' }); return;
-    }
-
-    // Non-atomic ledger swap: burn ZAR claim, then mint USD claim (same Phase-1
-    // limitation as escrow release; Phase-2 atomic Vault.adminTransfer).
-    const debitTx  = await vaultAdminDebit(wallet, zarUnits, 'ZAR');
-    const creditTx = await vaultAdminCredit(wallet, usdcUnits, 'USDC');
-
-    // Record the conversion + the platform fee (the spread, retained in ZAR) so it
-    // shows in the consumer's history detail and the admin's fee-revenue report.
-    const feeZarUnits = (zarUnits * BigInt(FX_SPREAD_BPS)) / 10_000n;
-    await db.query(
-      `INSERT INTO consumer_conversions
-         (wallet, from_currency, to_currency, from_amount, to_amount, rate, spread_bps, fee_amount, fee_currency, debit_tx, credit_tx)
-       VALUES ($1,'ZAR','USD',$2,$3,$4,$5,$6,'ZAR',$7,$8)`,
-      [wallet.toLowerCase(), zarUnits.toString(), usdcUnits.toString(), quote.rate, FX_SPREAD_BPS, feeZarUnits.toString(), debitTx, creditTx],
-    ).catch(e => console.error('[convert] failed to record conversion', e)); // best-effort — don't fail the convert
-
-    res.json({
-      from: 'ZAR', to: 'USD',
-      debited:  { amount: ethers.formatUnits(zarUnits, 2),  currency: 'ZAR' },
-      credited: { amount: ethers.formatUnits(usdcUnits, 6), currency: 'USD' },
-      rate: quote.rate, spreadBps: FX_SPREAD_BPS, source: quote.source,
-      fee: ethers.formatUnits(feeZarUnits, 2),
-      debitTx, creditTx,
-    });
+    const result = await executeConversion(wallet, String(amount), from, to);
+    res.json(result);
   } catch (err) {
+    const e = err as Error & { status?: number; code?: string };
+    if (e.status) {
+      res.status(e.status).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
+      return;
+    }
     console.error('[POST /api/consumer/convert]', err);
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -410,12 +525,12 @@ import {
 } from './safeRelayService.js';
 import { createClaim, escrowAddress } from './escrowService.js';
 import { cashIn } from './cashInService.js';
-import { vaultAdminCredit, vaultAdminDebit, usdcReserveUnits } from './treasuryService.js';
 import { fxService } from './fxService.js';
+import { quoteMerchantCheckout, resolveMerchantCheckout } from './merchantCheckoutService.js';
 import { b64urlToBuf } from './webauthnService.js';
 
-// Decimal places per currency for amount parsing (pilot: ZAR cash = 2, USDC = 6).
-const CURRENCY_DECIMALS: Record<string, number> = { ZAR: 2, USDC: 6 };
+// Decimal places per currency for amount parsing.
+const CURRENCY_DECIMALS: Record<string, number> = { ZAR: 2, MWK: 2, USDC: 6 };
 function decimalsFor(currency: string): number {
   return CURRENCY_DECIMALS[currency.toUpperCase()] ?? 2;
 }
@@ -428,11 +543,18 @@ const PENDING_TTL_MS = 5 * 60 * 1000;
 // present, transfer/submit records a merchant_sales row on success.
 interface SaleContext {
   merchantId?: string;
+  productId?: string;
+  storeId?: string;
   storeNumber?: string;
   tillNumber?: string;
   lat?: number;
   lng?: number;
   items?: { name: string; qty: number; unitPrice: number }[];
+  chargeAmount?: string;
+  chargeCurrency?: string;
+  fxRate?: number;
+  fxSource?: string;
+  fxAsOf?: string | null;
 }
 interface PendingTransfer {
   safeTx: SafeTx; senderWallet: string; toAddress: string;
@@ -469,13 +591,21 @@ async function recordMerchantSale(pending: PendingTransfer, txHash: string): Pro
       ? sale.items.map(i => ({ name: i.name, qty: i.qty, unitPrice: i.unitPrice, lineTotal: +(i.qty * i.unitPrice).toFixed(2) }))
       : null;
 
+    const { store, till } = resolveStoreTill(sale.storeNumber, sale.tillNumber);
+
     await db.query(
       `INSERT INTO merchant_sales
          (merchant_id, merchant_wallet, consumer_wallet, consumer_tag, amount, currency,
-          store_number, till_number, latitude, longitude, items, tx_hash, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'paid')`,
+          charge_amount, charge_currency, fx_rate, fx_source,
+          store_id, store_number, till_number, latitude, longitude, items, tx_hash, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'paid')`,
       [merchantId, merchantWallet, pending.senderWallet, consumerTag, amountMajor,
-       pending.currency.toUpperCase(), sale.storeNumber ?? null, sale.tillNumber ?? null,
+       pending.currency.toUpperCase(),
+       sale.chargeAmount != null ? Number(sale.chargeAmount) : null,
+       sale.chargeCurrency?.toUpperCase() ?? null,
+       sale.fxRate ?? null,
+       sale.fxSource ?? null,
+       sale.storeId ?? null, store, till,
        Number.isFinite(sale.lat) ? sale.lat : null, Number.isFinite(sale.lng) ? sale.lng : null,
        items ? JSON.stringify(items) : null, txHash],
     );
@@ -507,6 +637,34 @@ async function resolveRecipient(toRaw: string): Promise<string> {
   }
 }
 
+// ── GET /api/consumer/checkout/quote ──────────────────────────────────────────
+// Store rings up in chargeCurrency (e.g. MWK); consumer pays in settlement currency
+// (e.g. ZAR) at the live rate — direct TTZA transfer, no USD hop.
+router.get('/checkout/quote', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const merchantId = String(req.query.merchantId ?? '');
+    const storeId = req.query.storeId ? String(req.query.storeId) : undefined;
+    const chargeAmount = String(req.query.chargeAmount ?? '');
+    const chargeCurrency = String(req.query.chargeCurrency ?? '');
+    const payCurrency = req.query.payCurrency ? String(req.query.payCurrency) : undefined;
+
+    if (!merchantId || !chargeAmount || !chargeCurrency) {
+      res.status(400).json({ error: 'merchantId, chargeAmount, and chargeCurrency required' });
+      return;
+    }
+
+    res.json(await quoteMerchantCheckout({ merchantId, storeId, chargeAmount, chargeCurrency, payCurrency }));
+  } catch (err) {
+    const e = err as Error & { status?: number; code?: string };
+    if (e.status) {
+      res.status(e.status).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
+      return;
+    }
+    console.error('[GET /api/consumer/checkout/quote]', err);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/consumer/transfer/prepare ───────────────────────────────────────
 // Body: { to: "0x…" | "@tag", amount: "100.00", currency: "ZAR" }
 // Returns the SafeTx hash to sign (as a base64url WebAuthn challenge) + a summary.
@@ -516,21 +674,47 @@ router.post('/transfer/prepare', async (req: Request, res: Response): Promise<vo
     if (!to || !amount || !currency) { res.status(400).json({ error: 'Missing to, amount, or currency' }); return; }
 
     const senderWallet = req.consumer!.walletAddress;
-    let amountUnits: bigint;
-    try { amountUnits = ethers.parseUnits(String(amount), decimalsFor(currency)); }
-    catch { res.status(400).json({ error: 'Invalid amount' }); return; }
-    if (amountUnits <= 0n) { res.status(400).json({ error: 'Amount must be positive' }); return; }
-
     const toAddress = await resolveRecipient(to);
     if (toAddress.toLowerCase() === senderWallet.toLowerCase()) {
       res.status(400).json({ error: 'Cannot send to yourself' }); return;
     }
 
+    let payCurrency = currency.toUpperCase();
+    let payAmountStr = String(amount);
+    let saleCtx: SaleContext | undefined = sale && typeof sale === 'object' ? { ...sale } : undefined;
+
+    if (saleCtx?.chargeCurrency && saleCtx?.chargeAmount && saleCtx?.merchantId) {
+      const resolved = await resolveMerchantCheckout({
+        merchantId: saleCtx.merchantId,
+        merchantWallet: toAddress,
+        storeId: saleCtx.storeId,
+        chargeAmount: String(saleCtx.chargeAmount),
+        chargeCurrency: saleCtx.chargeCurrency,
+        payCurrency,
+        clientPayAmount: payAmountStr,
+      });
+      payAmountStr = resolved.payAmount;
+      payCurrency = resolved.payCurrency;
+      saleCtx = {
+        ...saleCtx,
+        chargeAmount: resolved.chargeAmount,
+        chargeCurrency: resolved.chargeCurrency,
+        fxRate: resolved.fxRate,
+        fxSource: resolved.fxSource,
+        fxAsOf: resolved.fxAsOf,
+      };
+    }
+
+    let amountUnits: bigint;
+    try { amountUnits = ethers.parseUnits(payAmountStr, decimalsFor(payCurrency)); }
+    catch { res.status(400).json({ error: 'Invalid amount' }); return; }
+    if (amountUnits <= 0n) { res.status(400).json({ error: 'Amount must be positive' }); return; }
+
     // Pre-flight compliance mirror of the on-chain gate (better errors before signing).
     // Vault v1.2.0: each party must be a REGISTERED consumer (any level) or trusted.
     const [senderRegistered, recipientRegistered, recipientTrusted, balance] = await Promise.all([
       isRegisteredConsumer(senderWallet), isRegisteredConsumer(toAddress),
-      isTrustedCounterparty(toAddress), unifiedBalanceOf(senderWallet, currency),
+      isTrustedCounterparty(toAddress), unifiedBalanceOf(senderWallet, payCurrency),
     ]);
     if (!senderRegistered) { res.status(403).json({ error: 'Your account is not registered yet', code: 'SENDER_UNREGISTERED' }); return; }
     if (!recipientRegistered && !recipientTrusted) {
@@ -541,21 +725,23 @@ router.post('/transfer/prepare', async (req: Request, res: Response): Promise<vo
     }
 
     const { safeTx, safeTxHash } = await buildVaultTransferSafeTx({
-      safeAddress: senderWallet, toAddress, amount: amountUnits, currency,
+      safeAddress: senderWallet, toAddress, amount: amountUnits, currency: payCurrency,
     });
 
     sweepPending();
     pendingTransfers.set(safeTxHash, {
-      safeTx, senderWallet, toAddress, amount: amountUnits, currency, expiry: Date.now() + PENDING_TTL_MS,
-      sale: sale && typeof sale === 'object' ? sale : undefined,
+      safeTx, senderWallet, toAddress, amount: amountUnits, currency: payCurrency, expiry: Date.now() + PENDING_TTL_MS,
+      sale: saleCtx,
     });
 
     res.json({
       safeTxHash,
-      // The WebAuthn challenge is the raw 32-byte SafeTx hash, base64url-encoded.
       challenge: Buffer.from(safeTxHash.slice(2), 'hex').toString('base64url'),
       rpId: config.webauthn.rpId,
-      to: toAddress, amount: String(amount), currency: currency.toUpperCase(),
+      to: toAddress, amount: payAmountStr, currency: payCurrency,
+      charge: saleCtx?.chargeCurrency && saleCtx.chargeCurrency !== payCurrency
+        ? { amount: saleCtx.chargeAmount, currency: saleCtx.chargeCurrency, fxRate: saleCtx.fxRate }
+        : undefined,
       nonce: safeTx.nonce,
     });
   } catch (err) {
@@ -724,7 +910,8 @@ router.post('/transfer/escrow/submit', async (req: Request, res: Response): Prom
     // Build the wa.me deep-link the sender taps to message the recipient.
     const claimUrl = `${config.webauthn.origin}/#/claim/${secret}`;
     const display  = (Number(pending.amount) / 10 ** decimalsFor(pending.currency)).toFixed(2);
-    const text     = `I sent you R${display} on ${config.webauthn.rpName ?? 'iMali'}. Tap to claim it: ${claimUrl}`;
+    const appName  = await getAppDisplayName();
+    const text     = `I sent you R${display} on ${appName || config.webauthn.rpName}. Tap to claim it: ${claimUrl}`;
     const waLink   = `https://wa.me/${pending.recipientPhone.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
 
     res.json({ success: true, txHash, claimUrl, waLink, expiresAt, amount: pending.amount.toString(), currency: pending.currency });

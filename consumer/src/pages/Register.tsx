@@ -4,6 +4,14 @@ import { ChevronRight, AlertCircle, Fingerprint, AtSign } from 'lucide-react';
 import { api, setToken } from '@/lib/api';
 import { createPasskey, isPasskeySupported } from '@/lib/passkey';
 import { getAppName } from '@/lib/brand';
+import WalletSetupProgress, { type SetupStep } from '@/components/WalletSetupProgress';
+
+const WALLET_SETUP_STEPS: SetupStep[] = [
+  { id: 'prepare',   label: 'Preparing secure key' },
+  { id: 'biometric', label: 'Verify with biometrics' },
+  { id: 'wallet',    label: 'Creating your wallet on-chain' },
+  { id: 'identity',  label: 'Registering your @tag & identity' },
+];
 
 interface RegField {
   field_key: string; label: string;
@@ -77,11 +85,13 @@ export default function Register() {
   });
   const [error, setError]     = useState('');
   const [loading, setLoading] = useState(false);
+  const [walletStep, setWalletStep] = useState<string | null>(null);
   const [tagAvailable, setTagAvailable] = useState<boolean | null>(null);
   const [occupations, setOccupations]     = useState<string[]>([]);
   const [incomeSources, setIncomeSources] = useState<string[]>([]);
-  // Country auto-detected from the browser locale, validated against supported countries.
-  const [country, setCountry] = useState<{ code: string; dial_code: string } | null>(null);
+  // Country for dial code + registration (user can override auto-detect).
+  const [countries, setCountries] = useState<{ code: string; name: string; dial_code: string }[]>([]);
+  const [country, setCountry] = useState<{ code: string; name: string; dial_code: string } | null>(null);
 
   // Timezone reflects physical location better than UI language. Covers supported countries.
   const TZ_COUNTRY: Record<string, string> = {
@@ -104,7 +114,8 @@ export default function Register() {
   useEffect(() => {
     api.get<{ label: string }[]>('/kyc-options?category=occupation').then(rows => setOccupations(rows.map(r => r.label))).catch(() => {});
     api.get<{ label: string }[]>('/kyc-options?category=income_source').then(rows => setIncomeSources(rows.map(r => r.label))).catch(() => {});
-    api.get<{ code: string; dial_code: string }[]>('/countries').then(rows => {
+    api.get<{ code: string; name: string; dial_code: string }[]>('/countries').then(rows => {
+      setCountries(rows);
       // Timezone wins (physical location); then browser-locale region; then first active.
       const tzCode  = detectByTimezone();
       const tzMatch = tzCode ? rows.find(c => c.code === tzCode) : undefined;
@@ -176,16 +187,24 @@ export default function Register() {
   // the signer for the user's Safe wallet, then register. No MetaMask, no gas.
   async function createWalletWithPasskey() {
     if (!isPasskeySupported()) { setError('Passkeys are not supported on this device or browser.'); return; }
-    setLoading(true); setError('');
+    setLoading(true);
+    setError('');
+    setWalletStep('prepare');
+    let identityTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const opts     = await api.get<{ challenge: string; rp: { id: string; name: string }; userId: string }>('/auth/passkey/register-options');
-      const passkey  = await createPasskey({
+      const opts = await api.get<{ challenge: string; rp: { id: string; name: string }; userId: string }>('/auth/passkey/register-options');
+
+      setWalletStep('biometric');
+      const passkey = await createPasskey({
         challenge: opts.challenge,
         rpId:      opts.rp.id,
         rpName:    opts.rp.name,
         userId:    opts.userId,
-        userName:  form.accountTag || form.fullName || 'iMali user',
+        userName:  form.accountTag || form.fullName || `${getAppName()} user`,
       });
+
+      setWalletStep('wallet');
+      identityTimer = setTimeout(() => setWalletStep('identity'), 12_000);
 
       const result = await api.post<{ token?: string; walletAddress?: string }>('/register', {
         credentialId:   passkey.credentialId,
@@ -196,6 +215,8 @@ export default function Register() {
         countryCode:    country?.code ?? 'ZA',
         ensSubdomain:   form.accountTag,
       });
+
+      setWalletStep('done');
       if (result.token) setToken(result.token);
       if (result.walletAddress) set('walletAddress', result.walletAddress);
       finish();
@@ -205,7 +226,9 @@ export default function Register() {
       if (msg.includes('PILOT_CAP')) { setError('The pilot is at capacity.'); return; }
       setError(msg || 'Registration failed. Please try again.');
     } finally {
+      if (identityTimer) clearTimeout(identityTimer);
       setLoading(false);
+      setWalletStep(null);
     }
   }
 
@@ -256,11 +279,26 @@ export default function Register() {
                 Mobile Number{isRequired('mobile') && ' *'}
               </label>
               <div className="flex gap-2">
-                <div className="bg-brand-card border border-brand-accent/20 rounded-xl px-4 py-3 text-sm text-brand-accent/60 font-medium">{country?.dial_code ?? '+…'}</div>
-                <input type="tel" placeholder="71 234 5678" value={form.mobile}
+                <select
+                  value={country?.code ?? ''}
+                  onChange={e => {
+                    const picked = countries.find(c => c.code === e.target.value);
+                    if (picked) setCountry(picked);
+                  }}
+                  aria-label="Country dial code"
+                  className="shrink-0 w-[5.5rem] bg-brand-card border border-brand-accent/20 rounded-xl px-2 py-3 text-sm text-brand-accent font-medium outline-none focus:ring-2 focus:ring-brand-accent"
+                >
+                  {countries.map(c => (
+                    <option key={c.code} value={c.code}>{c.dial_code}</option>
+                  ))}
+                </select>
+                <input type="tel" placeholder="Phone number" value={form.mobile}
                   onChange={e => set('mobile', e.target.value)}
                   className="flex-1 bg-brand-card border border-brand-accent/20 rounded-xl px-4 py-3 text-sm text-brand-accent outline-none focus:ring-2 focus:ring-brand-accent" />
               </div>
+              {country && (
+                <p className="text-xs text-white/70 px-1">{country.name}</p>
+              )}
             </div>
             <Btn onClick={nextStep}>Continue <ChevronRight size={16} className="inline" /></Btn>
             {!isRequired('mobile') && (
@@ -377,6 +415,9 @@ export default function Register() {
                 <p className="text-xs text-white">Your account tag</p>
                 <p className="font-bold text-white">@{form.accountTag}</p>
               </div>
+            )}
+            {loading && walletStep && (
+              <WalletSetupProgress steps={WALLET_SETUP_STEPS} currentId={walletStep} />
             )}
             <Btn onClick={createWalletWithPasskey} disabled={loading}>
               <span className="flex items-center justify-center gap-2">

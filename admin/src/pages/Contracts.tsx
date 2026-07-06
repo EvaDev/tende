@@ -16,17 +16,30 @@ interface Deployment {
   onChainVersion: string | null;
 }
 
+interface TreasuryInstance {
+  symbol: string;
+  name: string;
+  fiat_code: string;
+  proxy_address: string;
+  is_deployed: boolean;
+}
+
+interface TreasuryInstancesResponse {
+  sharedImplementation: string | null;
+  instances: TreasuryInstance[];
+}
+
 const short = (a?: string | null) => a ? `${a.slice(0, 8)}…${a.slice(-6)}` : '—';
 
 const CHAIN_NAMES: Record<number, string> = { 1: 'Ethereum Mainnet', 11155111: 'Sepolia Testnet' };
 const chainName = (id: number) => CHAIN_NAMES[id] ?? `Chain ${id}`;
 
-const cols: Col<Deployment>[] = [
+const coreCols: Col<Deployment>[] = [
   { key: 'contract', header: 'Contract',
     sort: d => d.contract_name, search: d => d.contract_name,
     className: 'px-4 py-3 font-medium text-gray-900',
     render: d => d.contract_name },
-  { key: 'proxy', header: 'Proxy',
+  { key: 'proxy', header: 'Proxy / Address',
     search: d => d.proxy_address,
     className: 'px-4 py-3 font-mono text-xs text-gray-600',
     render: d => <span title={d.proxy_address}>{short(d.proxy_address)}</span> },
@@ -56,21 +69,50 @@ const cols: Col<Deployment>[] = [
     render: d => d.notes ?? '' },
 ];
 
+const instanceCols: Col<TreasuryInstance>[] = [
+  { key: 'symbol', header: 'Symbol', sort: i => i.symbol, search: i => i.symbol,
+    render: i => <span className="font-mono font-bold">{i.symbol}</span> },
+  { key: 'name', header: 'Name', sort: i => i.name, search: i => i.name,
+    render: i => i.name },
+  { key: 'fiat', header: 'Fiat anchor', sort: i => i.fiat_code ?? '', search: i => i.fiat_code ?? '',
+    render: i => i.fiat_code ?? '—' },
+  { key: 'proxy', header: 'Instance (proxy)', search: i => i.proxy_address,
+    className: 'font-mono text-xs',
+    render: i => (
+      <a href={`https://sepolia.etherscan.io/address/${i.proxy_address}`} target="_blank" rel="noreferrer" className="underline hover:text-brand-accent">
+        {short(i.proxy_address)}
+      </a>
+    ) },
+  { key: 'status', header: 'Status', sort: i => (i.is_deployed ? 1 : 0),
+    render: i => (
+      <Badge className={i.is_deployed ? 'bg-brand-accent/10 text-brand-accent' : 'bg-gray-100 text-gray-500'}>
+        {i.is_deployed ? 'Deployed' : 'Pending'}
+      </Badge>
+    ) },
+];
+
 export default function Contracts() {
   const { isAdmin } = useRole();
   const publicPages = usePublicPages();
   const canView = isAdmin || publicPages.includes('contracts');
   const [rows, setRows]   = useState<Deployment[] | null>(null);
+  const [instances, setInstances] = useState<TreasuryInstancesResponse | null>(null);
   const [error, setError] = useState<'auth' | 'other' | null>(null);
 
-  useEffect(() => {
-    if (!canView) return;
+  function load() {
     apiFetch<Deployment[]>('/api/admin/contract-deployments')
       .then(r => { setRows(r); setError(null); })
       .catch(e => setError(e instanceof AuthError ? 'auth' : 'other'));
+    apiFetch<TreasuryInstancesResponse>('/api/admin/treasury-instances')
+      .then(setInstances)
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    if (!canView) return;
+    load();
   }, [canView]);
 
-  // Admin-only unless opted into public read-only viewing (Settings → Public pages).
   if (!canView) {
     return (
       <div className="max-w-2xl">
@@ -85,7 +127,7 @@ export default function Contracts() {
   }
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="space-y-6 max-w-4xl">
       <h2 className="text-xl font-semibold text-brand-accent">Contract Deployments</h2>
 
       {error === 'auth' && (
@@ -101,19 +143,48 @@ export default function Contracts() {
 
       <Card className="p-0 overflow-hidden">
         <SortableTable
-          cols={cols}
+          cols={coreCols}
           rows={rows ?? []}
           initialSort={{ key: 'contract', dir: 'asc' }}
           searchable
           searchPlaceholder="Search contract or address…"
         />
-        <p className="text-xs text-gray-500 px-4 py-3 border-t bg-gray-50">
-          <strong>Live Implementation</strong> is read from each proxy's ERC-1967 slot at request time —
-          it changes on every UUPS upgrade. <strong>On-chain Version</strong> reads the contract's
-          <code> VERSION()</code>; it shows “redeploy pending” until the deployed bytecode includes the
-          version constant.
+        <p className="text-sm text-gray-700 px-4 py-3 border-t bg-gray-50 leading-relaxed">
+          Three core platform contracts: Consumer, Vault, and TreasuryToken (shared logic).
+          Each corridor token is a separate <strong>proxy instance</strong> registered in
+          stablecoins — see below.
         </p>
       </Card>
+
+      <div>
+        <h3 className="text-lg font-semibold text-brand-accent mb-3">Treasury token instances</h3>
+        <Card className="p-0 overflow-hidden">
+          {instances?.sharedImplementation && (
+            <div className="px-4 py-3 border-b bg-white text-sm text-gray-800 leading-relaxed">
+              <span className="font-medium text-gray-900">Shared implementation</span>
+              {' '}
+              <a
+                href={`https://sepolia.etherscan.io/address/${instances.sharedImplementation}`}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono underline hover:text-brand-accent"
+                title={instances.sharedImplementation}
+              >
+                {short(instances.sharedImplementation)}
+              </a>
+              {' '}
+              — all corridor proxies delegate to this logic; upgrading it upgrades every token.
+            </div>
+          )}
+          <SortableTable
+            cols={instanceCols}
+            rows={instances?.instances ?? []}
+            initialSort={{ key: 'symbol', dir: 'asc' }}
+            searchable
+            searchPlaceholder="Search symbol, name, fiat…"
+          />
+        </Card>
+      </div>
     </div>
   );
 }

@@ -28,9 +28,11 @@ contract Vault is
     using SafeERC20 for IERC20;
 
     /// @notice Implementation version. Bump on every upgrade (constant, in bytecode).
+    /// 1.3.0 — platformReserveAssets excludes admin-deposited capital from
+    ///         harvestable yield; only true backing-token accrual is distributable.
     /// 1.2.0 — P2P transfer gate accepts any REGISTERED consumer (Level 0+), not
     ///         only KYC level >= 1; tier limits are enforced off-chain for now.
-    string public constant VERSION = "1.2.0";
+    string public constant VERSION = "1.3.0";
 
     /// @notice Basis-points denominator (100% = 10_000).
     uint16 public constant BPS_DENOMINATOR = 10_000;
@@ -114,6 +116,11 @@ contract Vault is
     /// USDC) without the merchant being a registered consumer. APPEND-ONLY.
     mapping(address => bool) public trustedCounterparty;
 
+    /// Platform-owned backing assets held in the vault (e.g. USDC reserve from
+    /// admin mint). Excluded from harvestable yield so only true yield accrual
+    /// is distributed to consumers. APPEND-ONLY.
+    mapping(bytes32 => uint256) public platformReserveAssets;
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     event Credited(address indexed user, bytes32 indexed currencyCode, uint256 amount, address indexed creditor);
@@ -131,6 +138,7 @@ contract Vault is
     event YieldHarvested(bytes32 indexed currencyCode, uint256 yieldDelta, uint256 platformCut, uint256 userYield, address indexed treasury);
     event TotalAssetsReconciled(bytes32 indexed currencyCode, uint256 oldValue, uint256 newValue);
     event TrustedCounterpartySet(address indexed account, bool trusted);
+    event PlatformReserveRecorded(bytes32 indexed currencyCode, uint256 amount, uint256 newTotal);
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
@@ -552,24 +560,38 @@ contract Vault is
         return _convertToAssets(currencyCode, 1e18, false);
     }
 
+    // ── Platform reserve ──────────────────────────────────────────────────────
+
+    /// @notice Record platform capital held in the vault (not user liabilities).
+    ///         Increments `platformReserveAssets` so harvest() cannot treat it as yield.
+    function recordPlatformReserve(bytes32 currencyCode, uint256 amount)
+        external
+        onlyRole(ADMIN_EXECUTOR_ROLE)
+    {
+        if (currencyCode == bytes32(0)) revert InvalidCurrency();
+        if (amount == 0) revert ZeroAmount();
+        platformReserveAssets[currencyCode] += amount;
+        emit PlatformReserveRecorded(currencyCode, amount, platformReserveAssets[currencyCode]);
+    }
+
     // ── Yield harvesting ──────────────────────────────────────────────────────
 
     /// @notice View the currently harvestable yield for a currency: the gap
-    ///         between the vault's *actual* backing-token holdings and the
-    ///         recorded `totalAssets`. Returns 0 if holdings <= recorded.
+    ///         between actual backing-token holdings and user liabilities plus
+    ///         platform reserve. Returns 0 if holdings <= recorded + reserve.
     /// @dev    Safe to call by anyone; pure read. The backend uses this to decide
     ///         whether a harvest() is worth the gas before scheduling one.
     function harvestableYield(bytes32 currencyCode) public view returns (uint256) {
         uint256 actual = _actualHoldings(currencyCode);
-        uint256 recorded = totalAssets[currencyCode];
-        return actual > recorded ? actual - recorded : 0;
+        uint256 liabilities = totalAssets[currencyCode] + platformReserveAssets[currencyCode];
+        return actual > liabilities ? actual - liabilities : 0;
     }
 
     /// @notice Harvest accrued yield for a currency. Sweeps the platform's cut to
     ///         the treasury as real tokens; the user portion accrues to holders
     ///         automatically by raising price-per-share — NO per-user crediting.
     ///
-    ///         Yield = (actual backing-token holdings) − (recorded totalAssets).
+    ///         Yield = actual holdings − totalAssets − platformReserveAssets.
     ///         platformCut → treasuryAddress as real tokens. The user portion is
     ///         added to totalAssets WITHOUT minting shares, so every holder's
     ///         convertToAssets(shares) rises pro-rata in one O(1) write (ERC-4626).
@@ -592,9 +614,10 @@ contract Vault is
 
         uint256 actualHoldings = _actualHoldings(currencyCode);
         uint256 recorded = totalAssets[currencyCode];
-        if (actualHoldings <= recorded) revert NoYield(currencyCode);
+        uint256 liabilities = recorded + platformReserveAssets[currencyCode];
+        if (actualHoldings <= liabilities) revert NoYield(currencyCode);
 
-        uint256 yieldDelta  = actualHoldings - recorded;
+        uint256 yieldDelta  = actualHoldings - liabilities;
         uint256 platformCut = (yieldDelta * platformFeeBps) / BPS_DENOMINATOR;
         userYield           = yieldDelta - platformCut;
 

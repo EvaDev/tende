@@ -8,10 +8,15 @@
 //
 // Profile/logo edits (business identity) are org_admin only; viewing and
 // ringing up products/sales is open to any operator (cashiers run the POS).
+// Product catalog edits (add/deactivate) are org_admin only.
 
 import express, { Request, Response } from 'express';
 import db from './db.js';
 import { requireMemberAuth, requireOrgAdmin } from './memberAuth.middleware.js';
+import { parseProductBody, mapProductRow, PRODUCT_SELECT } from './productHelpers.js';
+import { prepareChangeVoucher, sendChangeVoucherToTag } from './changeVoucherService.js';
+import { createMerchantStore, listMerchantStores, listProductCorridors, resolveProductCorridor, updateMerchantStore } from './storeService.js';
+import { SQL_STORE_LABEL, SQL_TILL_LABEL } from './salesLabels.js';
 
 const router = express.Router();
 
@@ -109,40 +114,242 @@ router.put('/me/logo', requireOrgAdmin, async (req: Request, res: Response): Pro
 router.get('/me/products', requireMemberAuth, async (req: Request, res: Response): Promise<void> => {
   try {
     const r = await db.query(
-      `SELECT product_id AS id, name, price, currency_code, icon_id, is_active
+      `SELECT ${PRODUCT_SELECT}
          FROM products WHERE merchant_id = $1
         ORDER BY created_at DESC`,
       [req.member!.merchantId],
     );
-    res.json(r.rows);
+    res.json(r.rows.map(row => mapProductRow(row as Record<string, unknown>)));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
 });
 
-router.post('/me/products', requireMemberAuth, async (req: Request, res: Response): Promise<void> => {
+router.post('/me/products', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
   try {
-    const m = await db.query<{ country_code: string; currency_code: string }>(
-      `SELECT country_code, currency_code FROM merchants WHERE merchant_id = $1`, [req.member!.merchantId]);
-    if (!m.rows.length) { res.status(404).json({ error: 'Merchant not found' }); return; }
+    const merchantId = req.member!.merchantId;
+    const body = req.body as import('./productHelpers.js').ProductBody & { currencyCode?: string; countryCode?: string };
 
-    const { name, unitPrice } = req.body as { name?: string; unitPrice?: number | string };
-    if (!name?.trim()) { res.status(400).json({ error: 'Product name is required' }); return; }
-    const price = Number(unitPrice);
-    if (!(price > 0)) { res.status(400).json({ error: 'Unit price must be a positive number' }); return; }
-    const cents = Math.round(price * 100); // products store minor units (cents)
+    const parsed = parseProductBody(body, false);
+    if (parsed.error) { res.status(400).json({ error: parsed.error }); return; }
 
-    const { country_code, currency_code } = m.rows[0];
-    const r = await db.query(
-      `INSERT INTO products
-         (merchant_id, country_code, currency_code, name, delivery_type, is_fixed_price, price, min_price, max_price, incurs_vat, is_active)
-       VALUES ($1,$2,$3,$4,'DIRECT',TRUE,$5,$5,$5,FALSE,TRUE)
-       RETURNING product_id AS id, name, price, currency_code, is_active`,
-      [req.member!.merchantId, country_code, currency_code, name.trim(), cents],
+    const corridors = await listProductCorridors(merchantId);
+    const defaultCorridor = corridors[0];
+    const corridor = await resolveProductCorridor(
+      merchantId,
+      body.currencyCode ?? defaultCorridor.currencyCode,
+      body.countryCode,
     );
-    res.status(201).json(r.rows[0]);
+
+    const cols = ['merchant_id', 'country_code', 'currency_code', ...Object.keys(parsed.fields), 'is_active'];
+    const vals = [merchantId, corridor.countryCode, corridor.currencyCode, ...Object.values(parsed.fields), true];
+    const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
+
+    const r = await db.query(
+      `INSERT INTO products (${cols.join(', ')})
+       VALUES (${placeholders})
+       RETURNING ${PRODUCT_SELECT}`,
+      vals,
+    );
+    res.status(201).json(mapProductRow(r.rows[0] as Record<string, unknown>));
   } catch (err) {
-    res.status(400).json({ error: (err as Error).message });
+    const status = (err as { status?: number }).status ?? 400;
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+router.patch('/me/products/:id', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const merchantId = req.member!.merchantId;
+    const body = req.body as import('./productHelpers.js').ProductBody & { currencyCode?: string; countryCode?: string };
+
+    const parsed = parseProductBody(body, true);
+    if (parsed.error) { res.status(400).json({ error: parsed.error }); return; }
+
+    if (body.currencyCode) {
+      const corridor = await resolveProductCorridor(merchantId, body.currencyCode, body.countryCode);
+      parsed.fields.country_code = corridor.countryCode;
+      parsed.fields.currency_code = corridor.currencyCode;
+    }
+
+    if (!Object.keys(parsed.fields).length) { res.status(400).json({ error: 'Nothing to update' }); return; }
+
+    const cols = Object.keys(parsed.fields);
+    const sets = cols.map((c, i) => `${c} = $${i + 3}`).join(', ');
+    const r = await db.query(
+      `UPDATE products SET ${sets}, updated_at = NOW()
+       WHERE product_id = $1 AND merchant_id = $2
+       RETURNING ${PRODUCT_SELECT}`,
+      [req.params.id, merchantId, ...Object.values(parsed.fields)],
+    );
+    if (!r.rows.length) { res.status(404).json({ error: 'Product not found in your catalog' }); return; }
+    res.json(mapProductRow(r.rows[0] as Record<string, unknown>));
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 400;
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+// ── Product corridors (country + fiat from stores) ───────────────────────────
+router.get('/me/products/corridors', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const corridors = await listProductCorridors(req.member!.merchantId);
+    res.json(corridors.map(c => ({
+      countryCode: c.countryCode,
+      currencyCode: c.currencyCode,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── Stores (country + fiat per location) ───────────────────────────────────────
+router.get('/me/stores', requireMemberAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const stores = await listMerchantStores(req.member!.merchantId, req.member!.memberId);
+    res.json(stores.map(s => ({
+      id: s.store_id,
+      storeCode: s.store_code,
+      name: s.name,
+      countryCode: s.country_code,
+      currencyCode: s.currency_code,
+      isActive: s.is_active,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/me/stores', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { storeCode, name, countryCode } = req.body as Record<string, string>;
+    const store = await createMerchantStore(req.member!.merchantId, { storeCode, name, countryCode });
+    res.status(201).json({
+      id: store.store_id,
+      storeCode: store.store_code,
+      name: store.name,
+      countryCode: store.country_code,
+      currencyCode: store.currency_code,
+      isActive: store.is_active,
+    });
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 400;
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+router.patch('/me/stores/:id', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, countryCode, isActive } = req.body as { name?: string; countryCode?: string; isActive?: boolean };
+    const store = await updateMerchantStore(req.member!.merchantId, String(req.params.id), { name, countryCode, isActive });
+    res.json({
+      id: store.store_id,
+      storeCode: store.store_code,
+      name: store.name,
+      countryCode: store.country_code,
+      currencyCode: store.currency_code,
+      isActive: store.is_active,
+    });
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 400;
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+// ── Change vouchers (digital change at till) ───────────────────────────────────
+router.post('/me/change-voucher/prepare', requireMemberAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { amount, productId, storeId, tillNumber } = req.body as Record<string, string>;
+    if (!amount) { res.status(400).json({ error: 'amount required' }); return; }
+    const result = await prepareChangeVoucher({
+      merchantId: req.member!.merchantId,
+      memberId: req.member!.memberId,
+      amount,
+      productId,
+      storeId,
+      tillNumber,
+    });
+    res.json(result);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 400;
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/me/change-voucher/send', requireMemberAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { tag, amount, productId, storeId, tillNumber } = req.body as Record<string, string>;
+    if (!tag || !amount) { res.status(400).json({ error: 'tag and amount required' }); return; }
+    const result = await sendChangeVoucherToTag({
+      merchantId: req.member!.merchantId,
+      memberId: req.member!.memberId,
+      tag,
+      amount,
+      productId,
+      storeId,
+      tillNumber,
+    });
+    res.json(result);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 400;
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+// ── Dashboard summary (sales + change vouchers) ───────────────────────────────
+router.get('/me/dashboard-summary', requireMemberAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const merchantId = req.member!.merchantId;
+    const [salesAgg, byStoreTill, changeVouchers] = await Promise.all([
+      db.query<{ transactions: number; total: string; currency: string | null }>(
+        `SELECT count(*)::int AS transactions,
+                COALESCE(SUM(amount), 0)::text AS total,
+                (SELECT currency FROM merchant_sales WHERE merchant_id = $1
+                  ORDER BY created_at DESC LIMIT 1) AS currency
+           FROM merchant_sales WHERE merchant_id = $1`,
+        [merchantId],
+      ),
+      db.query(
+        `SELECT ${SQL_STORE_LABEL} AS store_number,
+                ${SQL_TILL_LABEL} AS till_number,
+                currency
+           FROM merchant_sales WHERE merchant_id = $1
+          GROUP BY ${SQL_STORE_LABEL}, ${SQL_TILL_LABEL}, currency`,
+        [merchantId],
+      ),
+      db.query<{ issued: number; total_minor: string; currency: string | null }>(
+        `SELECT count(*)::int AS issued,
+                COALESCE(SUM(amount), 0)::text AS total_minor,
+                (SELECT currency FROM change_vouchers WHERE merchant_id = $1
+                   AND status IN ('claimed', 'pending')
+                 ORDER BY created_at DESC LIMIT 1) AS currency
+           FROM change_vouchers
+          WHERE merchant_id = $1 AND status IN ('claimed', 'pending')`,
+        [merchantId],
+      ),
+    ]);
+    const row = salesAgg.rows[0];
+    const cv = changeVouchers.rows[0];
+    const cvCurrency = cv?.currency ?? row?.currency ?? 'ZAR';
+    const cvDecimals = cvCurrency === 'USDC' || cvCurrency === 'USD' ? 6 : 2;
+    const cvTotalMajor = cv
+      ? (Number(cv.total_minor) / 10 ** cvDecimals).toFixed(2)
+      : '0';
+    res.json({
+      sales: {
+        total: row?.total ?? '0',
+        currency: row?.currency ?? 'ZAR',
+        transactions: row?.transactions ?? 0,
+        tillsActive: byStoreTill.rows.length,
+      },
+      changeVouchers: {
+        issued: cv?.issued ?? 0,
+        total: cvTotalMajor,
+        currency: cvCurrency,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 
@@ -151,21 +358,23 @@ router.get('/me/sales', requireMemberAuth, async (req: Request, res: Response): 
   try {
     const merchantId = req.member!.merchantId;
     const sales = await db.query(
-      `SELECT sale_id, amount, currency, store_number, till_number, latitude, longitude,
-              items, consumer_tag, consumer_wallet, tx_hash, status, created_at
+      `SELECT sale_id, amount, currency, charge_amount, charge_currency, fx_rate,
+              ${SQL_STORE_LABEL} AS store_number,
+              ${SQL_TILL_LABEL} AS till_number,
+              latitude, longitude, items, consumer_tag, consumer_wallet, tx_hash, status, created_at
          FROM merchant_sales WHERE merchant_id = $1
         ORDER BY created_at DESC LIMIT 500`,
       [merchantId],
     );
     const byStoreTill = await db.query(
-      `SELECT COALESCE(store_number, '—') AS store_number,
-              COALESCE(till_number, '—')  AS till_number,
+      `SELECT ${SQL_STORE_LABEL} AS store_number,
+              ${SQL_TILL_LABEL} AS till_number,
               currency,
               count(*)::int    AS sales,
               SUM(amount)::text AS total,
               MAX(created_at)  AS last_sale
          FROM merchant_sales WHERE merchant_id = $1
-        GROUP BY store_number, till_number, currency
+        GROUP BY ${SQL_STORE_LABEL}, ${SQL_TILL_LABEL}, currency
         ORDER BY SUM(amount) DESC`,
       [merchantId],
     );

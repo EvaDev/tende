@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { KeyRound } from 'lucide-react';
 import { claimSeat, loginWithPasskey } from '@/lib/memberAuth';
 import { isPasskeySupported } from '@/lib/passkey';
-import logoUrl from '@/assets/iMali_icon.png';
+import { getAppName, getAppLogo } from '@/lib/brand';
 
 export default function Login() {
   const [busy, setBusy]   = useState(false);
@@ -42,8 +42,8 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-brand-bg px-4">
       <div className="w-full max-w-sm bg-brand-card rounded-2xl shadow-lg p-8">
         <div className="flex flex-col items-center mb-6">
-          <img src={logoUrl} alt="iMali" className="w-14 h-14 object-contain mb-3" />
-          <h1 className="text-xl font-bold text-brand-accent">iMali Merchant</h1>
+          <img src={getAppLogo()} alt={getAppName()} className="w-14 h-14 object-contain mb-3" />
+          <h1 className="text-xl font-bold text-brand-accent">{getAppName()} Merchant</h1>
           <p className="text-sm text-gray-500 mt-1 text-center">Sign in with your passkey — no wallet needed.</p>
         </div>
 

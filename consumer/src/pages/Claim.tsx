@@ -58,7 +58,7 @@ export default function Claim() {
       <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center"><CheckCircle2 size={48} className="text-white" /></div>
       <div className="space-y-1">
         <h2 className="text-2xl font-bold text-white">R{rands} received</h2>
-        <p className="text-white">It’s in your {getAppName() || 'iMali'} wallet.</p>
+        <p className="text-white">It’s in your {getAppName()} wallet.</p>
       </div>
       <button onClick={() => navigate('/home')} className="w-full py-4 rounded-2xl bg-brand-accent text-brand-text font-semibold active:scale-95">Go to Wallet</button>
     </Shell>

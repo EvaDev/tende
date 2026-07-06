@@ -16,6 +16,7 @@ import express, { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import config from './config.js';
 import db from './db.js';
+import { getAppDisplayName } from './appBrand.js';
 import { newChallenge, extractP256FromSpki, verifyRegistrationClientData, verifyAssertion, b64urlToBuf } from './webauthnService.js';
 import { requireMemberAuth, requireOrgAdmin } from './memberAuth.middleware.js';
 import type { MemberJwtPayload } from './types.js';
@@ -42,27 +43,56 @@ interface MemberRow {
 // (pilot scope: memberId is enough since only the invited email can claim it).
 router.post('/invite', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, displayName, role } = req.body as Record<string, string>;
+    const { email, displayName, role, storeScope } = req.body as Record<string, string>;
     if (!email || !role) { res.status(400).json({ error: 'email and role required' }); return; }
     if (!['org_admin', 'store_manager', 'cashier'].includes(role)) {
       res.status(400).json({ error: 'role must be org_admin, store_manager, or cashier' }); return;
     }
+    const scope = storeScope?.trim() || null;
+    if (scope) {
+      const storeOk = await db.query(
+        `SELECT 1 FROM merchant_stores WHERE merchant_id = $1 AND store_code = $2 AND is_active = TRUE`,
+        [req.member!.merchantId, scope],
+      );
+      if (!storeOk.rows.length) {
+        res.status(400).json({ error: `Store code "${scope}" not found` });
+        return;
+      }
+    }
     const r = await db.query<{ id: number }>(
-      `INSERT INTO merchant_members (merchant_id, email, display_name, role, status, invited_by)
-       VALUES ($1, $2, $3, $4, 'invited', $5)
+      `INSERT INTO merchant_members (merchant_id, email, display_name, role, status, store_scope, invited_by)
+       VALUES ($1, $2, $3, $4, 'invited', $5, $6)
        RETURNING id`,
-      [req.member!.merchantId, email.toLowerCase(), displayName ?? null, role, req.member!.memberId],
+      [req.member!.merchantId, email.toLowerCase(), displayName ?? null, role, scope, req.member!.memberId],
     );
     res.status(201).json({ memberId: r.rows[0].id });
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === '23505') { res.status(409).json({ error: 'Already invited for this org' }); return; }
+    if ((err as NodeJS.ErrnoException).code === '23505') {
+      const existing = await db.query<{ id: number; role: string; status: string }>(
+        `SELECT id, role, status FROM merchant_members
+          WHERE merchant_id = $1 AND email = $2`,
+        [req.member!.merchantId, String((req.body as { email?: string }).email ?? '').toLowerCase()],
+      );
+      const row = existing.rows[0];
+      if (row) {
+        res.status(409).json({
+          error: `This email already has a seat on your team (${row.role.replace('_', ' ')}, ${row.status}).`,
+          memberId: row.id,
+          status: row.status,
+        });
+        return;
+      }
+      res.status(409).json({ error: 'Already invited for this org' });
+      return;
+    }
     res.status(500).json({ error: (err as Error).message });
   }
 });
 
 // ── POST /api/member-auth/claim-options ───────────────────────────────────────
-router.post('/claim-options', (_req: Request, res: Response): void => {
-  res.json({ challenge: newChallenge(), rp: { id: config.webauthn.rpId, name: config.webauthn.rpName } });
+router.post('/claim-options', async (_req: Request, res: Response): Promise<void> => {
+  const appName = await getAppDisplayName();
+  res.json({ challenge: newChallenge(), rp: { id: config.webauthn.rpId, name: appName || config.webauthn.rpName } });
 });
 
 // ── POST /api/member-auth/claim ───────────────────────────────────────────────
@@ -176,8 +206,8 @@ router.get('/me', requireMemberAuth, async (req: Request, res: Response): Promis
 
 // ── GET /api/member-auth/members ──────────────────────────────────────────── (org_admin)
 router.get('/members', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
-  const r = await db.query<MemberRow>(
-    `SELECT id, email, display_name, role, status, created_at FROM merchant_members
+  const r = await db.query<MemberRow & { store_scope: string | null }>(
+    `SELECT id, email, display_name, role, status, store_scope, created_at FROM merchant_members
      WHERE merchant_id = $1 ORDER BY created_at ASC`,
     [req.member!.merchantId],
   );

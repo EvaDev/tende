@@ -29,6 +29,71 @@ export default function Concepts() {
         </ul>
       </Section>
 
+      <Section title="FX conversion (ZAR ↔ USD)">
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Consumers can move value between their <strong>Spend (ZAR)</strong> and <strong>Save (USD)</strong> balances
+          on the home screen. These are not ERC-20 transfers to the user’s wallet — they are
+          <strong> vault ledger</strong> moves: the backend calls <Code>adminDebit</Code> on one currency claim and
+          <Code>adminCredit</Code> on the other. The consumer never receives TTZA or USDC tokens directly; they hold
+          unified balance shares inside the Vault.
+        </p>
+        <Table
+          head={['Direction', 'What happens on-chain', 'TTZA / USDC']}
+          rows={[
+            [
+              'ZAR → USD',
+              <>Debits the consumer’s ZAR claim; credits a USD (USDC-denominated) claim at live FX minus the platform spread. Gated on the vault’s <strong>USDC reserve</strong> (platform-funded).</>,
+              <>No TTZA mint or burn. The debited ZAR amount becomes <strong>unallocated TTZA</strong> in the vault — TTZA that is no longer backing any user’s ZAR claim. The spread is retained as platform revenue (fee recorded in ZAR).</>,
+            ],
+            [
+              'USD → ZAR',
+              <>Debits the consumer’s USD claim; credits a ZAR claim at live FX minus the spread.</>,
+              <>ZAR is credited from the vault’s <strong>unallocated TTZA pool</strong> first (TTZA already sitting in the vault from prior debits, top-ups, or platform float). TTZA is minted into the vault only if that pool is too small. The debited USDC becomes unallocated platform reserve — no ERC-20 moves off-chain.</>,
+            ],
+          ]}
+        />
+        <div className="rounded-xl border-2 border-amber-400/80 bg-amber-50 px-5 py-4 space-y-2">
+          <p className="text-sm font-semibold text-amber-950">
+            TTZA minting must always be funded
+          </p>
+          <p className="text-sm text-amber-950/90 leading-relaxed">
+            Whenever the protocol mints <strong>new TTZA</strong> — most often when a consumer converts
+            <strong> USD → ZAR</strong> and the vault’s unallocated TTZA pool is too small — that mint increases
+            total TTZA supply. New supply is only legitimate if it is backed by real value entering the
+            ecosystem. In practice that means one of two treasury actions must fund the mint:
+          </p>
+          <ul className="space-y-1.5 list-disc pl-5 text-sm text-amber-950/90">
+            <li>
+              <span className="font-semibold text-amber-950">Sale of $ (USD → ZAR conversion).</span>{' '}
+              The consumer’s USDC claim is debited; that USDC becomes platform reserve in the vault.
+              The ZAR credit is backed first from unallocated TTZA already in the vault; any shortfall
+              is covered by a fresh TTZA mint — economically funded by the USD the consumer gave up.
+            </li>
+            <li>
+              <span className="font-semibold text-amber-950">New fiat deposit (cash-in).</span>{' '}
+              An operator records a bank deposit or voucher top-up (Treasury → dev credit / consumer
+              voucher). Fiat arrives off-chain; TTZA is minted into the vault with a deposit reference
+              and the user’s ZAR claim is credited. This is how net-new ZAR enters the system without
+              a prior USD conversion.
+            </li>
+          </ul>
+          <p className="text-sm text-amber-950/90 leading-relaxed">
+            <span className="font-semibold text-amber-950">Do not mint TTZA without one of these legs.</span>{' '}
+            ZAR → USD conversion does <em>not</em> mint TTZA (it frees existing TTZA into the unallocated pool).
+            Merchant settlement sweeps TTZA to the platform wallet but does not mint. If unallocated TTZA
+            runs dry and consumers are converting USD → ZAR faster than fiat is coming in, the operator must
+            either pre-fund via a bank deposit or ensure the USDC reserve from conversions is sufficient
+            to honour the 1:1 ZAR backing rule.
+          </p>
+        </div>
+        <ul className="space-y-2 list-disc pl-5 text-sm text-gray-700">
+          <li><span className="font-semibold text-gray-900">Settlement is different.</span> When a merchant settles to fiat, the backend debits their ZAR claim and <strong>transfers TTZA to the platform wallet</strong> — it is swept, not burned. Consumer FX conversion does not sweep TTZA to the platform; it reallocates ledger claims inside the vault.</li>
+          <li><span className="font-semibold text-gray-900">Accounting identity.</span> TTZA in the vault should equal the sum of all on-chain ZAR claims (consumers + merchants) plus unallocated TTZA. USD claims are backed by USDC in the vault reserve, separate from TTZA.</li>
+          <li><span className="font-semibold text-gray-900">Phase 1 limitation.</span> Debit and credit are two separate admin transactions (not yet an atomic <Code>adminTransfer</Code>). Each conversion gets a unique off-chain reference (<Code>FX-…</Code>) stored in <Code>consumer_conversions</Code> for history and fee reporting.</li>
+          <li><span className="font-semibold text-gray-900">Merchant settlement burn.</span> When a merchant settles to fiat, the platform operator executes the approved request from <strong>Treasury → Merchant settlements</strong> (or Reports → Settlements). That debits the merchant’s ZAR claim and sweeps TTZA to the platform treasury wallet — shown as <strong>Platform R…</strong> on the dashboard. The TTZA is <em>not</em> burned automatically: after you pay the merchant’s bank, you burn the swept TTZA manually (on-chain <Code>burn</Code> — a dedicated admin burn action is planned; today it is operator-initiated outside the app if needed).</li>
+        </ul>
+      </Section>
+
       <Section title="The platform owner">
         <p className="text-sm text-gray-700 leading-relaxed">
           The <strong>platform owner</strong> is the single business that operates {appName}, through
@@ -42,7 +107,7 @@ export default function Concepts() {
             [
               <><Code>DEPLOYER_ADMIN_ADDRESS</Code><br/><span className="text-xs text-gray-500">owner / governance key</span></>,
               'Deploys and owns the contracts. Cold, used rarely.',
-              <>Holds <Code>DEFAULT_ADMIN_ROLE</Code> on all three contracts; authorises upgrades, pauses, grants roles. Is the <strong>platform treasury</strong> (trusted counterparty) and <strong>receives the protocol’s vault yield</strong>.</>,
+              <>Holds <Code>DEFAULT_ADMIN_ROLE</Code> on all three contracts; authorises upgrades, pauses, grants roles. Is the <strong>platform treasury</strong> (trusted counterparty) and <strong>receives all on-chain protocol revenue</strong> — harvested vault yield, settlement sweeps, and the token leg of realized fees.</>,
             ],
             [
               <><Code>BACKEND_SIGNER_ADDRESS</Code><br/><span className="text-xs text-gray-500">operational / hot key</span></>,
@@ -52,9 +117,14 @@ export default function Concepts() {
           ]}
         />
         <p className="text-sm text-gray-700 leading-relaxed">
-          <span className="font-semibold text-gray-900">Revenue:</span> the platform markup on asset
-          swaps, plus the protocol’s share of vault yield. <span className="font-semibold text-gray-900">Gas:</span> consumers
-          never pay — a Pimlico paymaster sponsors them, funded by the owner; if it runs dry, sponsorship stops.
+          <span className="font-semibold text-gray-900">Revenue:</span> all protocol revenue accrues to
+          the platform business and is received on-chain at{' '}
+          <Code>DEPLOYER_ADMIN_ADDRESS</Code> (or <Code>PLATFORM_TREASURY_ADDRESS</Code> if overridden) —
+          the same wallet as the platform treasury. That includes harvested vault yield (swept as real
+          tokens on <Code>harvest()</Code>), FX conversion spread (retained in the vault until realized),
+          and merchant settlement fees / swept TTZA. The backend signer never receives revenue; it only
+          pays gas. <span className="font-semibold text-gray-900">Gas:</span> in Phase 1 the backend
+          signer relays transactions and pays ETH gas; Pimlico AA sponsorship is not live yet.
         </p>
       </Section>
 
@@ -90,7 +160,7 @@ export default function Concepts() {
         <h4 className="font-semibold text-gray-900">ERC-4337 — Account Abstraction</h4>
         <p className="text-sm text-gray-700 leading-relaxed">
           Consumer wallets are <strong>Safe smart accounts</strong> signed by a device passkey
-          (P-256 / WebAuthn); a <strong>Pimlico</strong> bundler + paymaster sponsors gas. The owner’s
+          (P-256 / WebAuthn); a <strong>Pimlico</strong> bundler + paymaster sponsors gas. The platform owner’s
           two wallets are ordinary EOAs, not smart accounts.
         </p>
 

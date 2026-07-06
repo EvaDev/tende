@@ -7,11 +7,10 @@ import {
   Users, Landmark, Zap, Settings, ScrollText, ClipboardList, Info, Boxes, Gem, BookOpen, BarChart3, UserCog, ShieldCheck, ScanLine, Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppName, usePublicPages } from '@/hooks/useAppConfig';
+import { useAppName, useAppLogo, usePublicPages } from '@/hooks/useAppConfig';
 import { useRole } from '@/hooks/useRole';
 import { useMerchant } from '@/hooks/useMerchant';
 import { useDetectedCountry, flagEmoji } from '@/hooks/useDetectedCountry';
-import logoUrl from '@/assets/iMali_icon.png';
 
 const NAV = [
   { to: '/',           label: 'Dashboard',  icon: LayoutDashboard },
@@ -44,6 +43,7 @@ const NETWORKS: Record<number, { label: string; testnet: boolean }> = {
 export default function Layout() {
   const { isConnected, address, chainId, chain } = useAccount();
   const appName = useAppName();
+  const appLogo = useAppLogo();
   const publicPages = usePublicPages();
   const { role, resolved, error } = useRole();
   const { merchant } = useMerchant(role === 'merchant');
@@ -63,7 +63,7 @@ export default function Layout() {
       {/* Sidebar */}
       <aside className="w-56 flex-shrink-0 bg-brand-accent text-white flex flex-col">
         <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3">
-          <img src={logoUrl} alt={appName} className="w-9 h-9 object-contain flex-shrink-0" />
+          <img src={appLogo} alt={appName} className="w-9 h-9 object-contain flex-shrink-0" />
           <div className="flex-1">
             <span className="text-xl font-bold tracking-tight">{appName}</span>
             <span className="block text-xs text-white/50">Admin Console</span>

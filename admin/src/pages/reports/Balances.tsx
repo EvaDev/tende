@@ -11,6 +11,8 @@ interface CurrencyRow {
   netValue: number;
   users: number;
   lastActivity: string | null;
+  consumerNet: string | null;
+  merchantNet: string | null;
 }
 
 interface LedgerRow {
@@ -82,6 +84,10 @@ export default function Balances() {
     { key: 'debited',  header: 'Debited',  sort: r => Number(r.debited.replace(/,/g, '')),  render: r => money(r.debited) },
     { key: 'net',      header: 'Net held', sort: r => r.netValue,
       render: r => <span className="font-semibold text-brand-accent tabular-nums">{r.net}</span> },
+    { key: 'consumers', header: 'Consumers', sort: r => Number((r.consumerNet ?? '0').replace(/,/g, '')),
+      render: r => r.consumerNet != null ? money(r.consumerNet) : '—' },
+    { key: 'merchants', header: 'Merchants', sort: r => Number((r.merchantNet ?? '0').replace(/,/g, '')),
+      render: r => r.merchantNet != null ? money(r.merchantNet) : '—' },
     { key: 'users',    header: 'Users',    sort: r => r.users, render: r => r.users.toLocaleString() },
     { key: 'last',     header: 'Last activity', sort: r => r.lastActivity ?? '',
       render: r => (r.lastActivity ? new Date(r.lastActivity).toLocaleString() : '—') },
@@ -109,10 +115,13 @@ export default function Balances() {
   return (
     <Section title="Vault balances">
       <p className="text-sm text-gray-600">
-        The Vault's per-currency user balance ledger, from <code>Credited</code> / <code>Debited</code> —
-        top-ups, spends, FX conversion legs and manual adjustments. <strong>Net</strong> (credited − debited) is the
-        vault's outstanding backing per currency. Each currency shows its fiat and the on-chain token backing it
-        (e.g. <code>ZAR · TTZA</code>). P2P moves are in <em>Transfers</em>; token mint/burn in <em>Mint &amp; Burn</em>.
+        The Vault&apos;s per-currency user balance ledger, from <code>Credited</code> / <code>Debited</code> —
+        top-ups, spends, FX conversion legs and manual adjustments. <strong>Credited</strong> and{' '}
+        <strong>Debited</strong> sum admin ledger events only. <strong>Net held</strong> and the{' '}
+        <strong>Consumers</strong> / <strong>Merchants</strong> columns use on-chain vault balances
+        (authoritative for ZAR and USDC — harvest lifts USDC via price-per-share without{' '}
+        <code>Credited</code> events). P2P moves are in <em>Transfers</em>; token mint/burn in{' '}
+        <em>Mint &amp; Burn</em>.
       </p>
       <ReportState loading={loading} error={error} />
       {data && (

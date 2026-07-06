@@ -56,12 +56,26 @@ const CONSUMER_EVENTS = [
 
 interface Target { address: string; label: string; iface: ethers.Interface }
 
-function buildTargets(): Target[] {
+async function buildTargets(): Promise<Target[]> {
   const t: Target[] = [];
-  if (config.contracts.vault)           t.push({ address: config.contracts.vault.toLowerCase(),           label: 'Vault',         iface: new ethers.Interface(VAULT_EVENTS) });
-  if (config.contracts.treasuryTokenZA) t.push({ address: config.contracts.treasuryTokenZA.toLowerCase(), label: 'TreasuryToken', iface: new ethers.Interface(TREASURY_EVENTS) });
-  if (config.contracts.treasuryTokenZW) t.push({ address: config.contracts.treasuryTokenZW.toLowerCase(), label: 'TreasuryToken', iface: new ethers.Interface(TREASURY_EVENTS) });
-  if (config.contracts.consumer)        t.push({ address: config.contracts.consumer.toLowerCase(),        label: 'Consumer',      iface: new ethers.Interface(CONSUMER_EVENTS) });
+  const treasuryIface = new ethers.Interface(TREASURY_EVENTS);
+  if (config.contracts.vault)    t.push({ address: config.contracts.vault.toLowerCase(),    label: 'Vault',    iface: new ethers.Interface(VAULT_EVENTS) });
+  if (config.contracts.consumer) t.push({ address: config.contracts.consumer.toLowerCase(), label: 'Consumer', iface: new ethers.Interface(CONSUMER_EVENTS) });
+
+  try {
+    const r = await db.query<{ contract_address: string }>(
+      `SELECT contract_address FROM stablecoins
+        WHERE is_treasury_token = TRUE AND is_deployed = TRUE AND contract_address IS NOT NULL`,
+    );
+    for (const row of r.rows) {
+      t.push({ address: row.contract_address.toLowerCase(), label: 'TreasuryToken', iface: treasuryIface });
+    }
+  } catch { /* stablecoins absent */ }
+
+  if (t.filter(x => x.label === 'TreasuryToken').length === 0) {
+    if (config.contracts.treasuryTokenZA) t.push({ address: config.contracts.treasuryTokenZA.toLowerCase(), label: 'TreasuryToken', iface: treasuryIface });
+    if (config.contracts.treasuryTokenZW) t.push({ address: config.contracts.treasuryTokenZW.toLowerCase(), label: 'TreasuryToken', iface: treasuryIface });
+  }
   return t;
 }
 
@@ -143,16 +157,22 @@ export function startIndexer(): NodeJS.Timeout | undefined {
   if (!config.contracts.vault)  { console.log('[indexer] no contracts configured — not starting'); return; }
 
   const provider = new ethers.JsonRpcProvider(config.chain.rpcUrl);
-  const targets = buildTargets();
-  console.log(`[indexer] started — ${targets.map(t => t.label).join(', ')}; poll ${config.indexer.pollMs}ms, chunk ${config.indexer.chunkBlocks}, confirmations ${config.indexer.confirmations}`);
+  let targets: Target[] = [];
 
   const loop = async () => {
-    if (running) return;            // skip if a previous tick is still in flight
+    if (running) return;
     running = true;
-    try { await tick(provider, targets); }
-    catch (e) { console.error('[indexer] tick error:', (e as Error).message); }
+    try {
+      if (!targets.length) targets = await buildTargets();
+      await tick(provider, targets);
+    } catch (e) { console.error('[indexer] tick error:', (e as Error).message); }
     finally { running = false; }
   };
-  void loop(); // run immediately, then on interval
+
+  void buildTargets().then(t => {
+    targets = t;
+    console.log(`[indexer] started — ${targets.map(x => x.label).join(', ')}; poll ${config.indexer.pollMs}ms, chunk ${config.indexer.chunkBlocks}, confirmations ${config.indexer.confirmations}`);
+  });
+  void loop();
   return setInterval(() => void loop(), config.indexer.pollMs);
 }

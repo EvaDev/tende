@@ -19,7 +19,7 @@ const projectId  = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? 'demo';
 // EIP-6963 multi-provider discovery (a wagmi default) still surfaces each installed
 // wallet (MetaMask, Rabby, …) by its real name/icon under the "Installed" group.
 export const wagmiConfig = getDefaultConfig({
-  appName:   'iMali Admin',
+  appName:   'Admin Console',
   projectId,
   chains:    [sepolia, mainnet],
   wallets: [

@@ -48,8 +48,8 @@ const storeTillCols: Col<StoreTill>[] = [
 
 const saleCols: Col<Sale>[] = [
   { key: 'when', header: 'When', sort: s => s.created_at, render: s => new Date(s.created_at).toLocaleString() },
-  { key: 'store', header: 'Store', sort: s => s.store_number ?? '', render: s => s.store_number ?? '—' },
-  { key: 'till',  header: 'Till',  sort: s => s.till_number ?? '',  render: s => s.till_number ?? '—' },
+  { key: 'store', header: 'Store', sort: s => s.store_number ?? '', render: s => s.store_number ?? 'Head office' },
+  { key: 'till',  header: 'Till',  sort: s => s.till_number ?? '',  render: s => s.till_number ?? 'Web Sale' },
   { key: 'items', header: 'Items', search: s => itemsSummary(s.items),
     render: s => <span className="text-xs">{itemsSummary(s.items)}</span> },
   { key: 'amount', header: 'Amount', sort: s => Number(s.amount),

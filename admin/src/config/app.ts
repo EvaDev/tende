@@ -2,9 +2,26 @@
 // Colors have NO hardcoded defaults here; they come exclusively from the DB
 // via GET /api/config/all. If that call fails, the UI shows an error rather
 // than silently using a stale or wrong colour.
+import defaultLogo from '@/assets/iMali_icon.png';
+
 export const APP_DEFAULTS = {
-  name: 'iMali',
+  name: '',
 } as const;
+
+let cachedLogo = '';
+
+export function getAppLogo(): string {
+  return cachedLogo || defaultLogo;
+}
+
+export function applyAppLogo(logo?: string): void {
+  if (logo) cachedLogo = logo;
+  const link = (document.querySelector("link[rel~='icon']") as HTMLLinkElement)
+    ?? document.createElement('link');
+  link.rel = 'icon';
+  link.href = getAppLogo();
+  if (!link.parentElement) document.head.appendChild(link);
+}
 
 export function hexToRgb(hex: string): string {
   const n = parseInt(hex.replace('#', ''), 16);

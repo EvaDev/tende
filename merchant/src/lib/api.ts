@@ -24,8 +24,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new AuthError();
   }
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    const body = await res.json().catch(() => ({})) as { error?: string; memberId?: number; status?: string };
+    const err = new Error(body.error ?? `HTTP ${res.status}`) as Error & { memberId?: number; status?: string };
+    if (body.memberId != null) err.memberId = body.memberId;
+    if (body.status) err.status = body.status;
+    throw err;
   }
   return res.json() as Promise<T>;
 }

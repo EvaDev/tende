@@ -10,6 +10,13 @@ import dexQuoteService from './dexQuoteService.js';
 import { getHarvestableYield, harvestYield, mintUsdcToVault } from './treasuryService.js';
 import { reclaimExpiredClaims } from './escrowService.js';
 import { cashIn } from './cashInService.js';
+import { deployTreasuryToken, getSharedTreasuryImplementation, listTreasuryInstances, reconcileTreasuryInstances } from './treasuryDeployService.js';
+import { executeSettlement, type SettlementRequestRow } from './settlement.routes.js';
+import {
+  deployerPrivateKeyConfigured,
+  getGasWallets,
+  sendEthFromDeployerToSigner,
+} from './gasWalletService.js';
 
 const router = express.Router();
 
@@ -47,26 +54,7 @@ router.use((req: Request, res: Response, next): void => {
   requireAdmin(req, res, next);
 });
 
-// Resolve a recipient given a 0x address or an @tag (ENS subdomain registered on
-// the Consumer contract). Used by the dev tools so an operator can target "se1".
-async function resolveWalletOrTag(input: string): Promise<string> {
-  const v = (input || '').trim();
-  if (/^0x[0-9a-fA-F]{40}$/.test(v)) return ethers.getAddress(v);
-  const tag = v.replace(/^@/, '').toLowerCase().split('.')[0];
-  if (!/^[a-z0-9-]{3,32}$/.test(tag)) throw new Error('Enter a 0x address or @tag');
-  if (!config.contracts.consumer) throw new Error('Consumer contract not configured');
-  const consumer = new ethers.Contract(
-    config.contracts.consumer,
-    ['function getConsumerByEns(bytes32 ensHash) view returns (tuple(address spendWallet,address saveWallet,address usdWallet,bytes32 displayNameHash,bytes32 ensSubdomainHash,bytes32 countryCode,uint8 kycLevel,bool isActive,uint256 globalConsumerId))'],
-    new ethers.JsonRpcProvider(config.chain.rpcUrl),
-  );
-  try {
-    const d = await consumer.getConsumerByEns(ethers.keccak256(ethers.toUtf8Bytes(tag)));
-    return d.spendWallet as string;
-  } catch {
-    throw new Error(`No account found for @${tag}`);
-  }
-}
+import { resolveWalletOrTag } from './walletResolve.js';
 
 // ── Vault yield harvesting (admin-only) ───────────────────────────────────────
 // GET  /api/admin/harvestable?currency=ZAR  — preview the harvestable yield
@@ -109,31 +97,65 @@ const VERSION_ABI = ['function VERSION() view returns (string)'];
 
 router.get('/contract-deployments', allowPublicPage('contracts'), async (_req: Request, res: Response): Promise<void> => {
   try {
+    // Core platform contracts only. Treasury corridor instances → /treasury-instances.
     const rows = (await db.query(
       `SELECT contract_name, proxy_address, impl_address, version, chain_id, deploy_tx, deployed_at, notes
-       FROM contract_deployments ORDER BY contract_name`,
+         FROM contract_deployments
+        WHERE contract_name NOT LIKE 'TreasuryToken%'
+           OR contract_name = 'TreasuryToken'
+        ORDER BY contract_name`,
     )).rows as Array<Record<string, unknown>>;
 
     const provider = new ethers.JsonRpcProvider(config.chain.rpcUrl);
 
     const enriched = await Promise.all(rows.map(async (r) => {
+      const name = String(r.contract_name);
       const proxy = String(r.proxy_address);
       let liveImpl: string | null = null;
       let onChainVersion: string | null = null;
-      try {
-        const slot = await provider.getStorage(proxy, ERC1967_IMPL_SLOT);
-        const addr = ethers.getAddress(ethers.dataSlice(slot, 12)); // last 20 bytes
-        liveImpl = addr === ethers.ZeroAddress ? null : addr;
-      } catch { /* not a proxy / RPC issue */ }
-      try {
-        onChainVersion = await new ethers.Contract(proxy, VERSION_ABI, provider).VERSION() as string;
-      } catch { /* deployed logic predates VERSION() */ }
+
+      if (name === 'TreasuryToken') {
+        // Logic contract — not a corridor proxy instance.
+        liveImpl = r.impl_address ? String(r.impl_address) : proxy;
+        try {
+          onChainVersion = await new ethers.Contract(liveImpl, VERSION_ABI, provider).VERSION() as string;
+        } catch { /* no VERSION() */ }
+      } else {
+        try {
+          const slot = await provider.getStorage(proxy, ERC1967_IMPL_SLOT);
+          const addr = ethers.getAddress(ethers.dataSlice(slot, 12));
+          liveImpl = addr === ethers.ZeroAddress ? null : addr;
+        } catch { /* not a proxy */ }
+        try {
+          onChainVersion = await new ethers.Contract(proxy, VERSION_ABI, provider).VERSION() as string;
+        } catch { /* predates VERSION() */ }
+      }
       return { ...r, liveImpl, onChainVersion };
     }));
 
     res.json(enriched);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.get('/treasury-instances', allowPublicPage('contracts'), async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const instances = await listTreasuryInstances();
+    let sharedImplementation: string | null = null;
+    try { sharedImplementation = await getSharedTreasuryImplementation(); } catch { /* not registered yet */ }
+    res.json({ sharedImplementation, instances });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/treasury-instances/reconcile', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await reconcileTreasuryInstances();
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
   }
 });
 
@@ -231,19 +253,62 @@ router.patch('/assets/:id', requireAdmin, async (req: Request, res: Response): P
 
 router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
   try {
-    const [merchants, consumers, pending] = await Promise.all([
+    const { getVaultClaimsBySegment, getTreasuryDashboardSummary } = await import('./platformStats.js');
+    const { getProtocolFinancials } = await import('./platformFinancials.js');
+    const [merchants, consumers, pending, vaultClaims, treasurySummary, sales] = await Promise.all([
       db.query<{ count: string }>('SELECT COUNT(*) as count FROM merchants'),
       db.query<{ count: string }>('SELECT COUNT(*) as count FROM consumers'),
       db.query<{ count: string }>('SELECT COUNT(*) as count FROM consumers WHERE kyc_level_id = 0 OR kyc_level_id IS NULL'),
+      getVaultClaimsBySegment(),
+      getTreasuryDashboardSummary(),
+      db.query<{ total: string }>('SELECT COALESCE(SUM(amount), 0)::text AS total FROM merchant_sales'),
     ]);
+    const consumerCount = parseInt(consumers.rows[0]?.count ?? '0');
+    const financials = await getProtocolFinancials(consumerCount);
+    const salesTotal = Number(sales.rows[0]?.total ?? 0);
     res.json({
       merchants:   parseInt(merchants.rows[0]?.count ?? '0'),
-      consumers:   parseInt(consumers.rows[0]?.count ?? '0'),
+      consumers:   consumerCount,
       pendingKyc:  parseInt(pending.rows[0]?.count ?? '0'),
       totalVolume: 0,
+      vaultClaims,
+      financials,
+      treasurySummary,
+      totalSalesDisplay: salesTotal > 0 ? `R${Math.round(salesTotal)}` : null,
     });
   } catch {
-    res.json({ merchants: 0, consumers: 0, pendingKyc: 0, totalVolume: 0 });
+    res.json({ merchants: 0, consumers: 0, pendingKyc: 0, totalVolume: 0, vaultClaims: null, financials: null, treasurySummary: null });
+  }
+});
+
+// ── Settlements (platform operator executes approved fiat requests) ───────────
+
+router.post('/settlements/:id/execute', requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const r = await db.query<SettlementRequestRow>(
+      `SELECT * FROM settlement_requests WHERE id = $1`,
+      [Number(req.params.id)],
+    );
+    const row = r.rows[0];
+    if (!row) { res.status(404).json({ error: 'Not found' }); return; }
+    if (!['approved', 'failed'].includes(row.status)) {
+      res.status(409).json({ error: `Request is ${row.status}, not executable` }); return;
+    }
+    if (row.status === 'failed') {
+      await db.query(`UPDATE settlement_requests SET status = 'approved' WHERE id = $1`, [row.id]);
+      row.status = 'approved';
+    }
+
+    const meta = await db.query<{ settlement_type: string }>(
+      `SELECT settlement_type FROM merchants WHERE merchant_id = $1`, [row.merchant_id]);
+    const settlementType = meta.rows[0]?.settlement_type ?? 'FIAT';
+
+    await executeSettlement(row, settlementType);
+    const final = await db.query(`SELECT * FROM settlement_requests WHERE id = $1`, [row.id]);
+    res.json(final.rows[0]);
+  } catch (err) {
+    await db.query(`UPDATE settlement_requests SET status = 'failed' WHERE id = $1 AND status = 'approved'`, [Number(req.params.id)]);
+    res.status(502).json({ error: (err as Error).message });
   }
 });
 
@@ -359,9 +424,11 @@ router.get('/consumers', async (_req: Request, res: Response): Promise<void> => 
     const r = await db.query(
       `SELECT c.consumer_id as id, c.wallet_address, c.usd_wallet_address as safe_address,
               c.kyc_level_id as kyc_level, k.level_name as kyc_level_name, c.ens_subdomain,
+              c.country_code, co.name as country_name,
               c.idos_credential_id IS NOT NULL as idos_profile, c.created_at
        FROM consumers c
        LEFT JOIN kyc_levels k ON k.level_id = c.kyc_level_id
+       LEFT JOIN countries co ON co.country_code = c.country_code
        ORDER BY c.created_at DESC`,
     );
     res.json(r.rows);
@@ -412,9 +479,11 @@ router.get('/currencies', async (_req: Request, res: Response): Promise<void> =>
     const r = await db.query(
       `SELECT c.currency_code as code, c.name, c.currency_symbol as symbol,
               c.decimals, c.currency_type, c.is_active as enabled,
-              s.contract_address as token_address
+              c.base_currency_code,
+              s.contract_address as token_address,
+              COALESCE(s.is_deployed, FALSE) as is_deployed
        FROM currencies c
-       LEFT JOIN stablecoins s ON s.currency_code = c.currency_code
+       LEFT JOIN stablecoins s ON s.internal_code = c.currency_code
        ORDER BY c.currency_type, c.currency_code`,
     );
     res.json(r.rows);
@@ -425,23 +494,36 @@ router.get('/currencies', async (_req: Request, res: Response): Promise<void> =>
 
 router.post('/currencies', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code, name, symbol, decimals, currency_type } = req.body as {
-      code: string; name: string; symbol?: string; decimals?: number; currency_type?: string;
+    const { code, name, symbol, decimals, currency_type, base_currency_code } = req.body as {
+      code: string; name: string; symbol?: string; decimals?: number;
+      currency_type?: string; base_currency_code?: string;
     };
+    const type = currency_type ?? 'FIAT';
     const r = await db.query(
-      `INSERT INTO currencies (currency_code, name, currency_symbol, decimals, currency_type)
-       VALUES ($1,$2,$3,$4,$5)
+      `INSERT INTO currencies (currency_code, name, currency_symbol, decimals, currency_type, base_currency_code)
+       VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT (currency_code) DO UPDATE
          SET name=$2, currency_symbol=COALESCE($3, currencies.currency_symbol),
              decimals=COALESCE($4, currencies.decimals),
-             currency_type=COALESCE($5, currencies.currency_type)
+             currency_type=COALESCE($5, currencies.currency_type),
+             base_currency_code=COALESCE($6, currencies.base_currency_code)
        RETURNING currency_code as code, name, currency_symbol as symbol,
-                 decimals, currency_type, is_active as enabled`,
-      [code.toUpperCase(), name, symbol ?? code, decimals ?? 2, currency_type ?? 'FIAT'],
+                 decimals, currency_type, is_active as enabled, base_currency_code`,
+      [code.toUpperCase(), name, symbol ?? code, decimals ?? 2, type, base_currency_code?.toUpperCase() ?? null],
     );
     res.status(201).json(r.rows[0]);
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/currencies/:code/deploy', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await deployTreasuryToken(String(req.params.code));
+    res.json(result);
+  } catch (err) {
+    console.error('[POST /api/admin/currencies/:code/deploy]', err);
+    res.status(502).json({ error: (err as Error).message });
   }
 });
 
@@ -873,11 +955,16 @@ router.get('/escrow', async (_req: Request, res: Response): Promise<void> => {
 // ── Paymaster ─────────────────────────────────────────────────────────────────
 
 router.get('/paymaster', async (_req: Request, res: Response): Promise<void> => {
-  const mode      = process.env['PIMLICO_MODE'] ?? 'stub';
+  const mode = process.env['PIMLICO_MODE'] ?? 'stub';
   const policy_id = config.pimlico.sponsorshipPolicy;
-  const base = { mode, policy_id };
+  const status = 'not live';
+  const gasWallets = await getGasWallets();
+  const base = { mode, status, policy_id, gasWallets, canFundSigner: deployerPrivateKeyConfigured() };
 
-  if (mode !== 'live') { res.json(base); return; }
+  if (mode !== 'live') {
+    res.json(base);
+    return;
+  }
 
   try {
     const r = await fetch(config.pimlico.bundlerUrl, {
@@ -891,6 +978,24 @@ router.get('/paymaster', async (_req: Request, res: Response): Promise<void> => 
     res.json({ ...base, balance_eth });
   } catch {
     res.json({ ...base, balance_eth: null });
+  }
+});
+
+router.post('/paymaster/fund-signer', requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { amount } = req.body as { amount?: string };
+    if (!amount?.trim()) { res.status(400).json({ error: 'amount required (ETH)' }); return; }
+    const result = await sendEthFromDeployerToSigner(amount.trim());
+    const gasWallets = await getGasWallets();
+    res.json({ ...result, gasWallets });
+  } catch (err) {
+    const e = err as Error & { status?: number; code?: string };
+    if (e.status) {
+      res.status(e.status).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
+      return;
+    }
+    console.error('[POST /api/admin/paymaster/fund-signer]', err);
+    res.status(500).json({ error: e.message });
   }
 });
 

@@ -299,6 +299,28 @@ contract VaultTest is Test {
 
     // ── Yield harvesting ──────────────────────────────────────────────────────
 
+    function test_PlatformReserve_ExcludesCapitalFromHarvest() public {
+        uint256 dep = 50_000;
+        zarToken.mint(alice, dep);
+        vm.prank(alice);
+        zarToken.approve(address(vault), dep);
+        vault.depositFromExternal(alice, alice, address(zarToken), dep);
+
+        uint256 reserve = 200_000;
+        zarToken.mint(address(vault), reserve);
+        vm.prank(backend);
+        vault.recordPlatformReserve(ZAR_CODE, reserve);
+
+        assertEq(vault.harvestableYield(ZAR_CODE), 0);
+        vm.prank(backend);
+        vm.expectRevert(abi.encodeWithSelector(Vault.NoYield.selector, ZAR_CODE));
+        vault.harvest(ZAR_CODE, admin, 1_000);
+
+        uint256 trueYield = 5_000;
+        zarToken.mint(address(vault), trueYield);
+        assertEq(vault.harvestableYield(ZAR_CODE), trueYield);
+    }
+
     function test_Harvest_NoYieldWithoutSurplus_Reverts() public {
         uint256 amount = 50_000;
         zarToken.mint(alice, amount);

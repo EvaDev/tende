@@ -10,6 +10,8 @@
 
 import { ethers } from 'ethers';
 import { config } from './config.js';
+import db from './db.js';
+import { treasuryTokenAddressForCountry, treasuryTokenAddressForFiat } from './treasuryDeployService.js';
 
 const TREASURY_WHITELIST_ABI = [
   'function addToWhitelist(address account)',
@@ -25,7 +27,10 @@ const VAULT_TRUSTED_ABI = [
 const VAULT_HARVEST_ABI = [
   'function harvest(bytes32 currencyCode, address treasuryAddress, uint16 platformFeeBps) returns (uint256 userYield)',
   'function harvestableYield(bytes32 currencyCode) view returns (uint256)',
+  'function recordPlatformReserve(bytes32 currencyCode, uint256 amount)',
+  'function platformReserveAssets(bytes32 currencyCode) view returns (uint256)',
   'event YieldHarvested(bytes32 indexed currencyCode, uint256 yieldDelta, uint256 platformCut, uint256 userYield, address indexed treasury)',
+  'event PlatformReserveRecorded(bytes32 indexed currencyCode, uint256 amount, uint256 newTotal)',
 ];
 
 /// Currency code → bytes32, matching the Solidity keccak256("ZAR") / USDC_CODE etc.
@@ -69,13 +74,19 @@ export async function vaultAdminCredit(wallet: string, amount: bigint, currency:
 
 const TREASURY_MINT_ABI = ['function mint(address to, uint256 amount)'];
 
-export async function mintTreasuryZA(to: string, amount: bigint): Promise<string> {
-  if (!config.contracts.treasuryTokenZA) throw new Error('No TTZA address configured');
+export async function mintTreasuryToken(to: string, amount: bigint, fiatCode: string): Promise<string> {
+  const tokenAddr = await treasuryTokenAddressForFiat(fiatCode);
+  if (!tokenAddr) throw new Error(`No treasury token configured for ${fiatCode.toUpperCase()}`);
   if (!config.backend.privateKey)        throw new Error('No backend signer configured');
   const signer = new ethers.Wallet(config.backend.privateKey, new ethers.JsonRpcProvider(config.chain.rpcUrl));
-  const tt = new ethers.Contract(config.contracts.treasuryTokenZA, TREASURY_MINT_ABI, signer);
+  const tt = new ethers.Contract(tokenAddr, TREASURY_MINT_ABI, signer);
   const tx = await tt.mint(to, amount);
   const r = await tx.wait() as ethers.TransactionReceipt; return r.hash;
+}
+
+/** @deprecated Use mintTreasuryToken(vault, amount, 'ZAR') */
+export async function mintTreasuryZA(to: string, amount: bigint): Promise<string> {
+  return mintTreasuryToken(to, amount, 'ZAR');
 }
 
 export async function vaultAdminDebit(wallet: string, amount: bigint, currency: string): Promise<string> {
@@ -83,13 +94,140 @@ export async function vaultAdminDebit(wallet: string, amount: bigint, currency: 
   const r = await tx.wait() as ethers.TransactionReceipt; return r.hash;
 }
 
-// ── Settlement payout (merchant org withdrawals) ───────────────────────────────
+// ── Fiat settlement (POC): ledger debit + TTZA sweep ─────────────────────────
+// Cash-ins mint TTZA into the Vault and credit unified-ledger claims. Consumer→
+// merchant payments move claims only — the Vault reserve is TTZA, not ZARP.
+// withdrawToExternal expects a registered backing ERC-20 (ZARP) the Vault may not
+// hold; fiat settlement instead debits the merchant claim and sweeps TTZA to the
+// platform treasury for the operator to burn after paying the bank.
+
+const TREASURY_SWEEP_ABI = [
+  'function forcedTransfer(address from, address to, uint256 amount)',
+  'function balanceOf(address account) view returns (uint256)',
+];
+
+function treasuryTokenForCountry(countryCode: string): string {
+  // Sync fallback for env-configured pilot corridors; async callers should use treasuryTokenAddressForCountry.
+  switch (countryCode.toUpperCase()) {
+    case 'ZA': return config.contracts.treasuryTokenZA;
+    case 'ZW': return config.contracts.treasuryTokenZW;
+    default:   return '';
+  }
+}
+
+async function resolveTreasuryToken(countryCode: string): Promise<string> {
+  const fromDb = await treasuryTokenAddressForCountry(countryCode);
+  if (fromDb) return fromDb;
+  return treasuryTokenForCountry(countryCode);
+}
+
+export async function treasuryTokenBalanceOf(holder: string, countryCode: string): Promise<bigint> {
+  const tokenAddr = await resolveTreasuryToken(countryCode);
+  if (!tokenAddr) throw new Error(`No treasury token configured for ${countryCode.toUpperCase()}`);
+  const provider = new ethers.JsonRpcProvider(config.chain.rpcUrl);
+  const tt = new ethers.Contract(tokenAddr, TREASURY_SWEEP_ABI, provider);
+  return await tt.balanceOf(holder) as bigint;
+}
+
+/** Resolve a pilot country code for a fiat ledger currency (e.g. MWK → MW). */
+export async function countryCodeForFiat(fiatCode: string): Promise<string> {
+  const r = await db.query<{ country_code: string }>(
+    `SELECT country_code FROM countries WHERE currency_code = $1 AND is_active = TRUE LIMIT 1`,
+    [fiatCode.toUpperCase()],
+  );
+  if (!r.rows.length) throw new Error(`No country configured for currency ${fiatCode.toUpperCase()}`);
+  return r.rows[0].country_code;
+}
+
+/** Sum of all consumer + merchant vault claims for a fiat currency. */
+export async function sumAllUserFiatClaimsOnChain(fiatCode: string): Promise<bigint> {
+  const [cons, merch] = await Promise.all([
+    db.query<{ wallet_address: string }>(`SELECT wallet_address FROM consumers WHERE wallet_address IS NOT NULL`),
+    db.query<{ wallet_address: string }>(`SELECT wallet_address FROM merchants WHERE wallet_address IS NOT NULL`),
+  ]);
+  let total = 0n;
+  for (const w of [...cons.rows, ...merch.rows]) {
+    try {
+      total += await vaultBalanceOf(w.wallet_address, fiatCode);
+    } catch { /* skip unreachable wallets */ }
+  }
+  return total;
+}
+
+/** TreasuryToken in the vault not currently backing any on-chain fiat claim. */
+export async function unallocatedTreasuryBacking(fiatCode: string): Promise<bigint> {
+  if (!config.contracts.vault) return 0n;
+  const countryCode = await countryCodeForFiat(fiatCode);
+  const vaultTt = await treasuryTokenBalanceOf(config.contracts.vault, countryCode);
+  const userClaims = await sumAllUserFiatClaimsOnChain(fiatCode);
+  return vaultTt > userClaims ? vaultTt - userClaims : 0n;
+}
+
+/**
+ * Credit a fiat vault claim using existing treasury float in the vault first;
+ * mint TreasuryToken backing only for the shortfall (platform issuance).
+ */
+export async function creditFiatWithTreasuryBacking(
+  wallet: string,
+  amountUnits: bigint,
+  fiatCode: string,
+): Promise<{ creditTx: string; mintTx?: string; mintAmount?: bigint }> {
+  if (!config.contracts.vault) throw new Error('No vault address configured');
+  const unallocated = await unallocatedTreasuryBacking(fiatCode);
+  const mintNeeded = amountUnits > unallocated ? amountUnits - unallocated : 0n;
+  let mintTx: string | undefined;
+  if (mintNeeded > 0n) {
+    mintTx = await mintTreasuryToken(config.contracts.vault, mintNeeded, fiatCode);
+  }
+  const creditTx = await vaultAdminCredit(wallet, amountUnits, fiatCode);
+  return { creditTx, mintTx, mintAmount: mintNeeded > 0n ? mintNeeded : undefined };
+}
+
+/// Move TTZA/TTZW from the Vault reserve to the platform treasury (COMPLIANCE_ROLE).
+export async function sweepTreasuryFromVault(
+  toAddress: string, amount: bigint, countryCode: string,
+): Promise<string> {
+  if (!config.contracts.vault)    throw new Error('No vault address configured');
+  if (!config.backend.privateKey) throw new Error('No backend signer configured');
+  const tokenAddr = await resolveTreasuryToken(countryCode);
+  if (!tokenAddr) throw new Error(`No treasury token configured for ${countryCode.toUpperCase()}`);
+
+  const vault = config.contracts.vault;
+  const reserve = await treasuryTokenBalanceOf(vault, countryCode);
+  if (reserve < amount) {
+    throw new Error(
+      `Insufficient treasury backing in vault reserve: have ${reserve.toString()} units, need ${amount.toString()}`,
+    );
+  }
+
+  const signer = new ethers.Wallet(config.backend.privateKey, new ethers.JsonRpcProvider(config.chain.rpcUrl));
+  const tt = new ethers.Contract(tokenAddr, TREASURY_SWEEP_ABI, signer);
+  const tx = await tt.forcedTransfer(vault, toAddress, amount);
+  const r = await tx.wait() as ethers.TransactionReceipt;
+  return r.hash;
+}
+
 // Vault.withdrawToExternal is onlyRole(ADMIN_EXECUTOR_ROLE) — a backend-signed
 // call, no signature from `from` required on-chain. That's what makes the
 // "hybrid" custody model work: the head-office approval gate (see
 // settlement.routes.ts) is an off-chain check the backend enforces *before*
 // calling this, not an on-chain multisig.
 const VAULT_WITHDRAW_ABI = ['function withdrawToExternal(address from, address recipient, address token, uint256 amount)'];
+
+export async function vaultBackingTokenForCurrency(currency: string): Promise<string> {
+  if (!config.contracts.vault) throw new Error('No vault address configured');
+  const provider = new ethers.JsonRpcProvider(config.chain.rpcUrl);
+  const vault = new ethers.Contract(
+    config.contracts.vault,
+    ['function currencyTokenAt(bytes32 currencyCode, uint256 index) view returns (address)'],
+    provider,
+  );
+  const token = await vault.currencyTokenAt(currencyHash(currency), 0) as string;
+  if (!token || /^0x0+$/.test(token)) {
+    throw new Error(`No vault backing token registered for ${currency}`);
+  }
+  return token;
+}
 
 export async function withdrawToExternal(
   fromWallet: string, recipient: string, tokenAddress: string, amount: bigint,
@@ -111,17 +249,40 @@ export async function withdrawToExternal(
 const MOCK_MINT_ABI  = ['function mint(address to, uint256 amount)'];
 const VAULT_USDC_ABI = ['function usdcToken() view returns (address)'];
 
-export async function mintUsdcToVault(amount: bigint): Promise<{ mintTx: string; usdc: string }> {
+export async function mintUsdcToVault(amount: bigint): Promise<{ mintTx: string; usdc: string; reserveTx?: string }> {
   if (!config.contracts.vault)    throw new Error('No vault address configured');
   if (!config.backend.privateKey) throw new Error('No backend signer configured');
   const signer = new ethers.Wallet(config.backend.privateKey, new ethers.JsonRpcProvider(config.chain.rpcUrl));
-  const vault  = new ethers.Contract(config.contracts.vault, VAULT_USDC_ABI, signer);
+  const vault  = new ethers.Contract(config.contracts.vault, [...VAULT_USDC_ABI, ...VAULT_HARVEST_ABI], signer);
   const usdc   = await vault.usdcToken() as string;
   if (!usdc || /^0x0+$/.test(usdc)) throw new Error('Vault has no USDC token configured');
   const token  = new ethers.Contract(usdc, MOCK_MINT_ABI, signer);
   const tx     = await token.mint(config.contracts.vault, amount);
   const r      = await tx.wait() as ethers.TransactionReceipt;
-  return { mintTx: r.hash, usdc };
+
+  // Book the mint as platform reserve so harvest() cannot treat it as yield.
+  let reserveTx: string | undefined;
+  try {
+    const reserve = await vault.recordPlatformReserve(currencyHash('USDC'), amount);
+    const rr = await reserve.wait() as ethers.TransactionReceipt;
+    reserveTx = rr.hash;
+  } catch (e) {
+    console.warn('[mintUsdcToVault] recordPlatformReserve failed (upgrade vault to v1.3.0):', (e as Error).message);
+  }
+
+  return { mintTx: r.hash, usdc, reserveTx };
+}
+
+/// Backfill platform reserve on-chain (after vault v1.3.0 upgrade). Idempotent
+/// only if caller passes the exact delta still unrecorded.
+export async function recordPlatformReserve(currencyCode: string, amount: bigint): Promise<string> {
+  if (!config.contracts.vault)    throw new Error('No vault address configured');
+  if (!config.backend.privateKey) throw new Error('No backend signer configured');
+  const signer = new ethers.Wallet(config.backend.privateKey, new ethers.JsonRpcProvider(config.chain.rpcUrl));
+  const vault  = new ethers.Contract(config.contracts.vault, VAULT_HARVEST_ABI, signer);
+  const tx     = await vault.recordPlatformReserve(currencyHash(currencyCode), amount);
+  const r      = await tx.wait() as ethers.TransactionReceipt;
+  return r.hash;
 }
 
 // The platform's USD reserve = the USDC the Vault actually holds (backs consumers'
@@ -155,14 +316,8 @@ export interface MerchantOnchainResult {
 }
 
 /// Pilot mapping of country → deployed TreasuryToken. Extend as new corridors
-/// launch; returns null for countries without a treasury token (skip silently).
-function treasuryTokenForCountry(countryCode: string): string {
-  switch (countryCode.toUpperCase()) {
-    case 'ZA': return config.contracts.treasuryTokenZA;
-    case 'ZW': return config.contracts.treasuryTokenZW;
-    default:   return '';
-  }
-}
+/// launch; returns empty for countries without a treasury token (skip silently).
+// treasuryTokenForCountry is defined above (fiat settlement sweep helpers).
 
 /// Whitelist a merchant wallet on its country's TreasuryToken so it can receive
 /// the local treasury token as settlement. Idempotent: a no-op if already set.
@@ -171,7 +326,7 @@ export async function whitelistMerchant(
   walletAddress: string,
   countryCode: string,
 ): Promise<WhitelistResult> {
-  const tokenAddr = treasuryTokenForCountry(countryCode);
+  const tokenAddr = await resolveTreasuryToken(countryCode);
   if (!tokenAddr) {
     return { whitelisted: false, reason: `No treasury token configured for ${countryCode.toUpperCase()}` };
   }

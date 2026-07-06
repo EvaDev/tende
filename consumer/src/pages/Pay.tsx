@@ -11,32 +11,38 @@ import { api } from '@/lib/api';
 import { isPasskeySupported } from '@/lib/passkey';
 import { getAppName } from '@/lib/brand';
 
-// Minimal send: pick the wallet to send from, an amount, and a destination — a
-// payment tag, 0x address, or a phone number. A phone number routes through the
-// WhatsApp-escrow flow (held until the recipient onboards + claims).
-type Cur = 'ZAR' | 'USDC';
-const SYM: Record<Cur, string> = { ZAR: 'R', USDC: '$' };
-const WALLET: Record<Cur, string> = { ZAR: 'Rand wallet', USDC: 'USD wallet' };
-function money(n: number, cur: Cur) {
-  const num = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
-  return `${SYM[cur]}${num}`;
-}
-
-// A destination that is only digits / +()-. (no @, no 0x) with ≥7 digits is a phone.
 function looksLikePhone(v: string): boolean {
   const s = v.trim();
   if (!s || s.startsWith('0x') || s.includes('@')) return false;
   return /^\+?[\d\s().-]+$/.test(s) && s.replace(/\D/g, '').length >= 7;
 }
 
-interface BalanceSummary { zar: { formatted: string }; usd: { formatted: string } }
+type Leg = 'SPEND' | 'ZAR' | 'USDC';
+const SYM: Record<string, string> = { ZAR: 'R', MWK: 'MK', USD: '$', USDC: '$' };
+function money(n: number, cur: string, symOverride?: string) {
+  const num = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+  const sym = symOverride ?? SYM[cur.toUpperCase()] ?? cur;
+  return `${sym}${num}`;
+}
+
+interface BalanceSummary {
+  localCurrency: string;
+  localSymbol: string;
+  hasSeparateZar?: boolean;
+  spend: { currency: string; formatted: string };
+  zar: { currency: string; formatted: string };
+  usd: { formatted: string };
+}
 
 export default function Pay() {
   const navigate = useNavigate();
   const location = useLocation();
-  const initialFrom = (location.state as { from?: Cur } | null)?.from ?? 'ZAR';
+  const navState = location.state as { from?: Leg; spendCurrency?: string } | null;
 
-  const [currency, setCurrency] = useState<Cur>(initialFrom);
+  const [spendCode, setSpendCode] = useState('ZAR');
+  const [spendSym, setSpendSym]   = useState('R');
+  const [hasSeparateZar, setHasSeparateZar] = useState(false);
+  const [currency, setCurrency]   = useState('ZAR');
   const [to, setTo]         = useState('');
   const [amount, setAmount] = useState('');
   const [error, setError]   = useState('');
@@ -44,13 +50,31 @@ export default function Pay() {
   const [scanning, setScanning] = useState(false);
   const [result, setResult]   = useState<TransferResult | null>(null);
   const [escrow, setEscrow]   = useState<EscrowResult | null>(null);
-  const [avail, setAvail]     = useState<{ ZAR: number; USDC: number } | null>(null);
+  const [avail, setAvail]     = useState<Record<string, number>>({});
 
   useEffect(() => {
     api.get<{ summary: BalanceSummary }>('/consumer/balance')
-      .then(b => setAvail({ ZAR: parseFloat(b.summary?.zar.formatted ?? '0'), USDC: parseFloat(b.summary?.usd.formatted ?? '0') }))
+      .then(b => {
+        const s = b.summary;
+        const code = s?.spend?.currency ?? s?.localCurrency ?? 'ZAR';
+        const sym  = s?.localSymbol ?? SYM[code] ?? code;
+        const separateZar = s?.hasSeparateZar ?? code !== 'ZAR';
+        setSpendCode(code);
+        setSpendSym(sym);
+        setHasSeparateZar(separateZar);
+        const spendBal = parseFloat(s?.spend?.formatted ?? '0');
+        const zarBal   = parseFloat(s?.zar?.formatted ?? '0');
+        const usdBal   = parseFloat(s?.usd?.formatted ?? '0');
+        setAvail({
+          ...(separateZar ? { [code]: spendBal } : {}),
+          ZAR: zarBal,
+          USDC: usdBal,
+        });
+        const from = navState?.from;
+        setCurrency(from === 'USDC' ? 'USDC' : from === 'ZAR' ? 'ZAR' : code);
+      })
       .catch(() => {});
-  }, []);
+  }, [navState?.from]);
 
   function friendly(msg: string): string {
     if (msg.includes('SENDER_UNREGISTERED') || msg.includes('not registered')) return 'Your account isn’t registered yet.';
@@ -61,15 +85,22 @@ export default function Pay() {
     return msg || 'Something went wrong. Please try again.';
   }
 
+  const amountSym = currency === 'USDC' ? '$' : (currency === spendCode ? spendSym : SYM[currency] ?? currency);
   const phone = looksLikePhone(to);
 
-  // A scanned QR is either a POS pay-request ({imali, to, amt, cur}) — prefill the
-  // recipient + amount — or a plain tag / address / phone.
   function onScan(text: string) {
     setScanning(false); setError('');
     try {
-      const p = JSON.parse(text) as { imali?: unknown; to?: string; amt?: string };
-      if (p && p.imali && p.to) { setTo(String(p.to)); if (p.amt) setAmount(String(p.amt)); return; }
+      const p = JSON.parse(text) as { imali?: unknown; to?: string; amt?: string; cur?: string };
+      if (p && p.imali && p.to) {
+        setTo(String(p.to));
+        if (p.amt) setAmount(String(p.amt));
+        if (p.cur) {
+          const c = p.cur.toUpperCase();
+          setCurrency(c === 'USDC' || c === 'USD' ? 'USDC' : c === 'ZAR' ? 'ZAR' : (c || spendCode));
+        }
+        return;
+      }
     } catch { /* not a structured pay-request */ }
     setTo(text.trim());
   }
@@ -85,7 +116,7 @@ export default function Pay() {
         const prepared = await prepareEscrow({ recipientPhone: to.trim(), amount, currency });
         const r = await signAndSubmitEscrow(prepared);
         setEscrow(r);
-        window.open(r.waLink, '_blank'); // open WhatsApp with the prefilled claim link
+        window.open(r.waLink, '_blank');
       } else {
         const prepared = await prepareTransfer({ to: to.trim(), amount, currency });
         setResult(await signAndSubmitTransfer(prepared));
@@ -97,7 +128,6 @@ export default function Pay() {
     }
   }
 
-  // ── Escrow success (sent to a phone number) ──────────────────────────────────
   if (escrow) {
     const days = Math.max(1, Math.round((new Date(escrow.expiresAt).getTime() - Date.now()) / 86_400_000));
     return (
@@ -109,7 +139,7 @@ export default function Pay() {
           <div className="space-y-1">
             <h2 className="text-xl font-bold text-brand-accent">Held for {to.trim()}</h2>
             <p className="text-brand-accent/70 text-sm">
-              {money(parseFloat(amount), currency)} is held safely. Share the link so they can create their {getAppName() || 'iMali'} account and claim it. Unclaimed after {days} days, it returns to you.
+              {money(parseFloat(amount), currency)} is held safely. Share the link so they can create their {getAppName()} account and claim it. Unclaimed after {days} days, it returns to you.
             </p>
           </div>
           <button onClick={() => window.open(escrow.waLink, '_blank')} className="w-full py-3.5 rounded-2xl bg-brand-accent text-brand-text font-semibold active:scale-95 transition-transform flex items-center justify-center gap-2">
@@ -122,7 +152,6 @@ export default function Pay() {
     );
   }
 
-  // ── Transfer success (sent to an account) ────────────────────────────────────
   if (result) {
     return (
       <div className="min-h-dvh flex items-center justify-center px-6 bg-brand-bg">
@@ -143,7 +172,6 @@ export default function Pay() {
     );
   }
 
-  // ── Send form (overlaid card) ─────────────────────────────────────────────────
   return (
     <div className="min-h-dvh flex items-center justify-center px-6 bg-brand-bg">
       {scanning && <QrScanner onResult={onScan} onClose={() => setScanning(false)} />}
@@ -159,25 +187,31 @@ export default function Pay() {
           </div>
         )}
 
-        {/* 1. From wallet */}
         <div className="space-y-1">
           <label className="block text-xs font-semibold text-brand-accent">From</label>
           <select
             value={currency}
-            onChange={e => { setCurrency(e.target.value as Cur); setError(''); }}
+            onChange={e => { setCurrency(e.target.value); setError(''); }}
             className="w-full bg-white border border-brand-accent/20 rounded-xl px-3 py-3 text-sm text-brand-accent outline-none focus:ring-2 focus:ring-brand-accent"
           >
-            {(['ZAR', 'USDC'] as const).map(c => (
-              <option key={c} value={c}>{WALLET[c]}{avail ? ` — ${money(avail[c], c)}` : ''}</option>
-            ))}
+            {hasSeparateZar && (
+              <option value={spendCode}>
+                {spendCode} wallet{avail[spendCode] != null ? ` — ${money(avail[spendCode], spendCode, spendSym)}` : ''}
+              </option>
+            )}
+            <option value="ZAR">
+              Rand wallet{avail.ZAR != null ? ` — ${money(avail.ZAR, 'ZAR')}` : ''}
+            </option>
+            <option value="USDC">
+              USD wallet{avail.USDC != null ? ` — ${money(avail.USDC, 'USDC')}` : ''}
+            </option>
           </select>
         </div>
 
-        {/* 2. Amount */}
         <div className="space-y-1">
           <label className="block text-xs font-semibold text-brand-accent">Amount</label>
           <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-accent/50 font-semibold">{SYM[currency]}</span>
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-accent/50 font-semibold">{amountSym}</span>
             <input
               type="number" inputMode="decimal" value={amount} placeholder="0.00"
               onChange={e => { setAmount(e.target.value); setError(''); }}
@@ -186,7 +220,6 @@ export default function Pay() {
           </div>
         </div>
 
-        {/* 3. Destination + Scan */}
         <div className="space-y-1">
           <div className="flex items-center justify-between">
             <label className="block text-xs font-semibold text-brand-accent">To</label>

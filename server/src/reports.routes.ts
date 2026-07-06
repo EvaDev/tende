@@ -6,7 +6,10 @@
 import express, { Request, Response } from 'express';
 import { ethers } from 'ethers';
 import db from './db.js';
+import config from './config.js';
 import { allowPublicPage } from './admin.middleware.js';
+import { buildAddressLabelMap, labelForAddress } from './addressLabels.js';
+import { unifiedBalanceOf } from './safeRelayService.js';
 
 const router = express.Router();
 
@@ -28,6 +31,93 @@ const decimalsFor = (currency: string): number => DECIMALS[currency] ?? 2;
 // Format a raw minor-unit amount (string/number) to a major-unit display string.
 const toMajor = (raw: unknown, decimals: number): string =>
   (Number(raw ?? 0) / 10 ** decimals).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: decimals });
+
+async function buildPartyLabels(): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  const set = (addr: string | undefined | null, label: string) => {
+    if (addr && /^0x[0-9a-fA-F]{40}$/.test(addr)) labels.set(addr.toLowerCase(), label);
+  };
+  set(config.contracts.vault, 'Vault');
+  set(config.platform.treasuryAddress, 'Platform');
+  set(config.platform.escrowAddress, 'Escrow');
+  try {
+    const cons = await db.query<{ w: string; ens: string | null }>(
+      `SELECT LOWER(wallet_address) w, ens_subdomain ens FROM consumers WHERE wallet_address IS NOT NULL`);
+    for (const r of cons.rows) {
+      set(r.w, r.ens ? `@${r.ens}` : 'Consumer');
+    }
+    const merch = await db.query<{ w: string; name: string }>(
+      `SELECT LOWER(wallet_address) w, name FROM merchants WHERE wallet_address IS NOT NULL`);
+    for (const r of merch.rows) {
+      set(r.w, r.name);
+    }
+  } catch { /* tables may be absent */ }
+  return labels;
+}
+
+function partyLabel(addr: string, labels: Map<string, string>): string {
+  return labels.get((addr ?? '').toLowerCase()) ?? addr;
+}
+
+async function sumSegmentZar(wallets: string[]): Promise<number> {
+  let total = 0;
+  for (const w of wallets) {
+    try {
+      const raw = await unifiedBalanceOf(w, 'ZAR');
+      total += Number(raw) / 100;
+    } catch { /* skip */ }
+  }
+  return total;
+}
+
+async function sumSegmentUsdc(wallets: string[]): Promise<number> {
+  let total = 0;
+  for (const w of wallets) {
+    try {
+      const raw = await unifiedBalanceOf(w, 'USDC');
+      total += Number(raw) / 1e6;
+    } catch { /* skip */ }
+  }
+  return total;
+}
+
+const amountDisplay = (raw: unknown, currency: string): string => {
+  const dec = decimalsFor(currency);
+  const major = toMajor(raw, dec);
+  if (currency === 'ZAR') return `R${major}`;
+  if (currency === 'USD' || currency === 'USDC') return `$${major}`;
+  return major;
+};
+
+/** Contract address → treasury token code + on-chain decimals (TreasuryToken.sol = 2dp). */
+async function buildTreasuryTokenRegistry(): Promise<Map<string, { code: string; decimals: number }>> {
+  const map = new Map<string, { code: string; decimals: number }>();
+  const TREASURY_DECIMALS = 2;
+  try {
+    const q = await db.query<{ address: string; code: string }>(
+      `SELECT lower(s.contract_address) AS address, s.internal_code AS code
+         FROM stablecoins s
+        WHERE s.is_treasury_token = TRUE AND s.contract_address IS NOT NULL`,
+    );
+    for (const r of q.rows) map.set(r.address, { code: r.code, decimals: TREASURY_DECIMALS });
+  } catch { /* stablecoins absent */ }
+  if (map.size === 0 && config.contracts.treasuryTokenZA) {
+    map.set(config.contracts.treasuryTokenZA.toLowerCase(), { code: 'TTZA', decimals: TREASURY_DECIMALS });
+  }
+  if (config.contracts.treasuryTokenZW) {
+    const zw = config.contracts.treasuryTokenZW.toLowerCase();
+    if (!map.has(zw)) map.set(zw, { code: 'TTZW', decimals: TREASURY_DECIMALS });
+  }
+  return map;
+}
+
+function tokenForAddress(
+  registry: Map<string, { code: string; decimals: number }>,
+  address: string | null | undefined,
+): { code: string; decimals: number } {
+  const hit = registry.get(String(address ?? '').toLowerCase());
+  return hit ?? { code: 'TTZA', decimals: 2 };
+}
 
 // GET /api/admin/reports/summary — counts by contract/event + indexer cursor.
 router.get('/summary', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
@@ -66,16 +156,80 @@ router.get('/events', allowPublicPage('reports'), async (req: Request, res: Resp
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });
 
+// GET /api/admin/reports/settlement-fees — platform revenue from merchant settlements.
+router.get('/settlement-fees', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const r = await db.query<{ currency: string; settlements: number; total_fee: string; total_gross: string }>(
+      `SELECT currency,
+              COUNT(*)::int AS settlements,
+              COALESCE(SUM(fee_amount), 0)::text AS total_fee,
+              COALESCE(SUM(amount), 0)::text AS total_gross
+         FROM settlement_requests
+        WHERE status = 'executed' AND COALESCE(fee_amount, 0) > 0
+        GROUP BY currency`,
+    );
+    res.json(r.rows.map(x => ({
+      currency: x.currency,
+      settlements: x.settlements,
+      totalFee: Number(x.total_fee).toFixed(2),
+      totalGross: Number(x.total_gross).toFixed(2),
+    })));
+  } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+});
+
+// GET /api/admin/reports/settlements — merchant fiat/on-chain payout requests.
+router.get('/settlements', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const r = await db.query<{
+      id: number; merchant_id: string; merchant_name: string; amount: string; currency: string;
+      destination: string; status: string; requested_by_name: string | null;
+      approved_at: string | null; executed_tx_hash: string | null; created_at: string;
+      settlement_type: string; fee_amount: string | null; net_amount: string | null;
+    }>(
+      `SELECT sr.id, sr.merchant_id, m.name AS merchant_name, sr.amount, sr.currency,
+              sr.destination, sr.status, mm.display_name AS requested_by_name,
+              sr.approved_at, sr.executed_tx_hash, sr.created_at, m.settlement_type,
+              sr.fee_amount::text, sr.net_amount::text
+         FROM settlement_requests sr
+         JOIN merchants m ON m.merchant_id = sr.merchant_id
+         LEFT JOIN merchant_members mm ON mm.id = sr.requested_by
+        ORDER BY sr.created_at DESC LIMIT 500`,
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+});
+
 // GET /api/admin/reports/transfers — value movements (the flow / Travel-Rule feed).
 router.get('/transfers', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
   try {
+    const labels = await buildPartyLabels();
     const r = await db.query(
       `SELECT block_number, block_time, tx_hash,
               args->>'from' AS "from", args->>'to' AS "to",
               args->>'amount' AS amount, args->>'currencyCode' AS currency_hash
        FROM chain_events WHERE event_name = 'Transferred'
        ORDER BY block_number DESC LIMIT 500`);
-    res.json(r.rows.map(x => ({ ...x, currency: decodeCurrency(x.currency_hash) })));
+    res.json(r.rows.map(x => {
+      const currency = decodeCurrency(x.currency_hash);
+      const dec = decimalsFor(currency);
+      const amountRaw = Number(x.amount ?? 0);
+      return {
+        ...x,
+        currency,
+        amountDisplay: amountDisplay(x.amount, currency),
+        amountValue: amountRaw / 10 ** dec,
+        fromLabel: partyLabel(x.from, labels),
+        toLabel: partyLabel(x.to, labels),
+      };
+    }));
+  } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+});
+
+// GET /api/admin/reports/gas-fees — total ETH gas paid by the platform relayer.
+router.get('/gas-fees', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const { getGasFeeTotals } = await import('./gasCostService.js');
+    res.json(await getGasFeeTotals());
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });
 
@@ -88,7 +242,17 @@ router.get('/revenue', allowPublicPage('reports'), async (_req: Request, res: Re
               count(*)::int AS harvests
        FROM chain_events WHERE event_name = 'YieldHarvested'
        GROUP BY args->>'currencyCode'`);
-    res.json(r.rows.map(x => ({ currency: decodeCurrency(x.currency_hash), platformCut: x.platform_cut, harvests: x.harvests })));
+    res.json(r.rows.map(x => {
+      const currency = decodeCurrency(x.currency_hash);
+      const dec = decimalsFor(currency);
+      const raw = Number(x.platform_cut ?? 0);
+      return {
+        currency,
+        platformCut: x.platform_cut,
+        platformCutDisplay: toMajor(raw, dec),
+        harvests: x.harvests,
+      };
+    }));
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });
 
@@ -97,19 +261,24 @@ router.get('/revenue', allowPublicPage('reports'), async (_req: Request, res: Re
 // post-spread amount); it's recorded per-conversion in consumer_conversions.
 router.get('/conversion-fees', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
   try {
-    const r = await db.query<{ fee_currency: string; total_fee: string; total_from: string; conversions: number }>(
+    const r = await db.query<{ fee_currency: string; total_fee: string; total_from_major: string; conversions: number }>(
       `SELECT fee_currency,
-              SUM(fee_amount)::numeric  AS total_fee,
-              SUM(from_amount)::numeric AS total_from,
-              count(*)::int             AS conversions
+              SUM(fee_amount)::numeric AS total_fee,
+              SUM(CASE WHEN from_currency IN ('USD','USDC')
+                       THEN from_amount::numeric / 1e6
+                       ELSE from_amount::numeric / 100 END)::text AS total_from_major,
+              count(*)::int AS conversions
          FROM consumer_conversions GROUP BY fee_currency`);
-    // fee_currency is ZAR (2dp minor units) for now — convert to major units for display.
-    res.json(r.rows.map(x => ({
-      feeCurrency:    x.fee_currency,
-      conversions:    x.conversions,
-      totalFee:       (Number(x.total_fee)  / 100).toFixed(2),
-      totalConverted: (Number(x.total_from) / 100).toFixed(2),
-    })));
+    const FEE_DECIMALS: Record<string, number> = { USD: 6, USDC: 6 };
+    res.json(r.rows.map(x => {
+      const dec = FEE_DECIMALS[x.fee_currency.toUpperCase()] ?? 2;
+      return {
+        feeCurrency:    x.fee_currency,
+        conversions:    x.conversions,
+        totalFee:       (Number(x.total_fee) / 10 ** dec).toFixed(2),
+        totalConverted: Number(x.total_from_major).toFixed(2),
+      };
+    }));
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });
 
@@ -234,11 +403,40 @@ router.get('/balances', allowPublicPage('reports'), async (_req: Request, res: R
         credited:     toMajor(r.credited, dec),
         debited:      toMajor(r.debited, dec),
         net:          toMajor(netRaw, dec),
-        netValue:     netRaw / 10 ** dec,   // numeric, for client-side sorting
+        netValue:     netRaw / 10 ** dec,
         users:        r.users,
         lastActivity: r.last_activity,
+        consumerNet:  null as string | null,
+        merchantNet:  null as string | null,
       };
     }).sort((a, b) => b.netValue - a.netValue);
+
+    const zarRow = byCurrency.find(r => r.currency === 'ZAR');
+    const usdRow = byCurrency.find(r => r.currency === 'USD' || r.token === 'USDC');
+    if (zarRow || usdRow) {
+      const [consW, merchW] = await Promise.all([
+        db.query<{ wallet_address: string }>(`SELECT wallet_address FROM consumers WHERE wallet_address IS NOT NULL`),
+        db.query<{ wallet_address: string }>(`SELECT wallet_address FROM merchants WHERE wallet_address IS NOT NULL`),
+      ]);
+      const consAddrs = consW.rows.map(r => r.wallet_address);
+      const merchAddrs = merchW.rows.map(r => r.wallet_address);
+      if (zarRow) {
+        const consumerZar = await sumSegmentZar(consAddrs);
+        const merchantZar = await sumSegmentZar(merchAddrs);
+        zarRow.consumerNet = toMajor(Math.round(consumerZar * 100), 2);
+        zarRow.merchantNet = toMajor(Math.round(merchantZar * 100), 2);
+      }
+      if (usdRow) {
+        // Ledger Credited/Debited misses harvest (price-per-share lift). Net + segments = on-chain.
+        const consumerUsdc = await sumSegmentUsdc(consAddrs);
+        const merchantUsdc = await sumSegmentUsdc(merchAddrs);
+        const netOnChain = consumerUsdc + merchantUsdc;
+        usdRow.consumerNet = toMajor(Math.round(consumerUsdc * 1e6), 6);
+        usdRow.merchantNet = toMajor(Math.round(merchantUsdc * 1e6), 6);
+        usdRow.net = toMajor(Math.round(netOnChain * 1e6), 6);
+        usdRow.netValue = netOnChain;
+      }
+    }
 
     const led = await db.query<{ block_time: string; block_number: string; log_index: number; event_name: string; user: string; amount: string; currency_hash: string; creditor: string | null; tx_hash: string }>(
       `SELECT block_time, block_number, log_index, event_name,
@@ -285,39 +483,79 @@ router.get('/balances', allowPublicPage('reports'), async (_req: Request, res: R
 // purchases, each linked to its off-chain deposit reference (voucher / bank ref).
 router.get('/treasury', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
   try {
-    const evs = await db.query<{ block_time: string; tx_hash: string; event_name: string; args: Record<string, string> }>(
-      `SELECT block_time, tx_hash, event_name, args
+    const tokenRegistry = await buildTreasuryTokenRegistry();
+
+    const evs = await db.query<{ block_time: string; tx_hash: string; event_name: string; args: Record<string, string>; address: string }>(
+      `SELECT block_time, tx_hash, event_name, args, address
          FROM chain_events
         WHERE event_name IN ('Minted','Burned','UsdPurchased')
         ORDER BY block_number DESC, log_index DESC LIMIT 500`);
 
-    // Off-chain references, keyed by the mint tx they back.
-    const refs = await db.query<{ mint_tx: string; reference: string; kind: string; source: string }>(
-      `SELECT lower(mint_tx) AS mint_tx, reference, kind, source FROM deposit_references WHERE mint_tx IS NOT NULL`);
+    const [refs, convRefs, changeMintRefs, labels] = await Promise.all([
+      db.query<{ mint_tx: string; reference: string; kind: string; source: string }>(
+        `SELECT lower(mint_tx) AS mint_tx, reference, kind, source FROM deposit_references WHERE mint_tx IS NOT NULL`),
+      db.query<{ mint_tx: string | null; credit_tx: string | null; reference: string; from_currency: string; to_currency: string }>(
+        `SELECT lower(mint_tx) AS mint_tx, lower(credit_tx) AS credit_tx, reference, from_currency, to_currency
+           FROM consumer_conversions WHERE reference IS NOT NULL`),
+      db.query<{ mint_tx: string; store_number: string | null; voucher_id: string }>(
+        `SELECT lower(mint_tx) AS mint_tx, store_number, voucher_id::text AS voucher_id
+           FROM change_vouchers WHERE mint_tx IS NOT NULL`).catch(() => ({ rows: [] as { mint_tx: string; store_number: string | null; voucher_id: string }[] })),
+      buildAddressLabelMap(),
+    ]);
+
     const refByTx: Record<string, { reference: string; kind: string; source: string }> = {};
     for (const r of refs.rows) refByTx[r.mint_tx] = { reference: r.reference, kind: r.kind, source: r.source };
+    for (const c of changeMintRefs.rows) {
+      if (refByTx[c.mint_tx]) continue;
+      const store = (c.store_number || 'STORE').trim();
+      refByTx[c.mint_tx] = {
+        reference: `${store}/CV-${c.voucher_id}`,
+        kind: 'change_voucher',
+        source: 'merchant',
+      };
+    }
+
+    const convByMintTx = new Map<string, typeof convRefs.rows[0]>();
+    for (const c of convRefs.rows) {
+      if (c.mint_tx) convByMintTx.set(c.mint_tx, c);
+    }
 
     const events = evs.rows.map((e) => {
       const a = e.args ?? {};
+      const txKey = String(e.tx_hash).toLowerCase();
       if (e.event_name === 'UsdPurchased') {
         return { type: 'Asset purchase', token: 'USDC', decimals: 6, amount: a.usdcReceived ?? '0',
                  spent: a.localAmount ?? '0', spentCurrency: decodeCurrency(a.localCurrency), spentDecimals: 2,
-                 party: a.buyer ?? '', reference: null, refKind: null, refSource: null,
+                 party: a.buyer ?? '', partyName: labelForAddress(labels, a.buyer ?? ''),
+                 reference: null, refKind: null, refSource: null,
                  txHash: e.tx_hash, blockTime: e.block_time };
       }
-      const ref = refByTx[String(e.tx_hash).toLowerCase()];
-      return { type: e.event_name, token: 'TTZA', decimals: 2, amount: a.amount ?? '0',
-               party: a.to ?? a.from ?? '', reference: ref?.reference ?? null, refKind: ref?.kind ?? null,
+      const depRef = refByTx[txKey];
+      const convRef = convByMintTx.get(txKey);
+      const ref = depRef ?? (convRef ? {
+        reference: convRef.reference,
+        kind: 'fx_conversion',
+        source: `${convRef.from_currency}/${convRef.to_currency}`,
+      } : null);
+      const party = a.to ?? a.from ?? '';
+      const { code: token, decimals } = tokenForAddress(tokenRegistry, e.address);
+      return { type: e.event_name, token, decimals, amount: a.amount ?? '0',
+               party, partyName: labelForAddress(labels, party),
+               reference: ref?.reference ?? null, refKind: ref?.kind ?? null,
                refSource: ref?.source ?? null, txHash: e.tx_hash, blockTime: e.block_time };
     });
 
-    const totalsRows = await db.query<{ event_name: string; t: string }>(
-      `SELECT event_name, SUM((args->>'amount')::numeric)::text t
-         FROM chain_events WHERE event_name IN ('Minted','Burned') GROUP BY event_name`);
-    const totals: Record<string, string> = {};
-    for (const r of totalsRows.rows) totals[r.event_name] = r.t;
+    const totalsRows = await db.query<{ event_name: string; address: string; t: string }>(
+      `SELECT event_name, address, SUM((args->>'amount')::numeric)::text t
+         FROM chain_events WHERE event_name IN ('Minted','Burned') GROUP BY event_name, address`);
+    const totalsByToken: Record<string, { Minted: string; Burned: string; decimals: number }> = {};
+    for (const r of totalsRows.rows) {
+      const { code, decimals } = tokenForAddress(tokenRegistry, r.address);
+      if (!totalsByToken[code]) totalsByToken[code] = { Minted: '0', Burned: '0', decimals };
+      totalsByToken[code][r.event_name as 'Minted' | 'Burned'] = r.t;
+    }
 
-    res.json({ events, totals }); // totals in TTZA raw units (2dp)
+    res.json({ events, totalsByToken });
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });
 

@@ -2,7 +2,8 @@ import { useState, useMemo, type ReactNode } from 'react';
 
 // A client-side sortable + text-searchable table for the report views. Columns opt
 // into sorting (via `sort`) and free-text search (via `search`) individually. Page-
-// level dropdown filters should pre-filter the `rows` array before passing it in.
+// level dropdown filters should pre-filter the `rows` array before passing it in, or
+// use `toolbarExtra` for inline filter controls beside the search box.
 export interface Col<T> {
   key: string;
   header: string;
@@ -14,12 +15,13 @@ export interface Col<T> {
 
 type SortState = { key: string; dir: 'asc' | 'desc' } | null;
 
-export function SortableTable<T>({ cols, rows, initialSort, searchable, searchPlaceholder }: {
+export function SortableTable<T>({ cols, rows, initialSort, searchable, searchPlaceholder, toolbarExtra }: {
   cols: Col<T>[];
   rows: T[];
   initialSort?: { key: string; dir: 'asc' | 'desc' };
   searchable?: boolean;
   searchPlaceholder?: string;
+  toolbarExtra?: ReactNode;
 }) {
   const [sort, setSort] = useState<SortState>(initialSort ?? null);
   const [q, setQ]       = useState('');
@@ -49,16 +51,21 @@ export function SortableTable<T>({ cols, rows, initialSort, searchable, searchPl
     setSort(s => (s && s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
   };
 
+  const showToolbar = searchable || toolbarExtra;
+
   return (
     <div>
-      {searchable && (
-        <div className="p-3 border-b border-gray-200">
-          <input
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            placeholder={searchPlaceholder ?? 'Search…'}
-            className="w-full sm:w-72 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-accent/40"
-          />
+      {showToolbar && (
+        <div className="p-3 border-b border-gray-200 flex flex-wrap gap-3 items-center">
+          {toolbarExtra}
+          {searchable && (
+            <input
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              placeholder={searchPlaceholder ?? 'Search…'}
+              className="w-full sm:w-72 sm:ml-auto rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-accent/40"
+            />
+          )}
         </div>
       )}
       <div className="overflow-x-auto">

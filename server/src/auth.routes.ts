@@ -12,6 +12,7 @@ import express, { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import config from './config.js';
 import db     from './db.js';
+import { getAppDisplayName } from './appBrand.js';
 import { newChallenge, bufToB64url, verifyAssertion } from './webauthnService.js';
 import { issueNonce, verifyAndConsume } from './authNonce.js';
 import crypto from 'crypto';
@@ -121,10 +122,11 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 // challenge for the create() ceremony and the full login (get()) ceremony.
 
 // GET /api/auth/passkey/register-options — challenge + RP info for navigator.credentials.create()
-router.get('/passkey/register-options', (_req: Request, res: Response): void => {
+router.get('/passkey/register-options', async (_req: Request, res: Response): Promise<void> => {
+  const appName = await getAppDisplayName();
   res.json({
     challenge: newChallenge(),
-    rp:        { id: config.webauthn.rpId, name: config.webauthn.rpName },
+    rp:        { id: config.webauthn.rpId, name: appName || config.webauthn.rpName },
     // Fresh random user handle — the Safe wallet doesn't exist until registration completes.
     userId:    bufToB64url(crypto.randomBytes(16)),
   });

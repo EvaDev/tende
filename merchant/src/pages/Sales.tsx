@@ -3,12 +3,16 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { SortableTable, type Col } from '@/components/SortableTable';
 import { apiFetch } from '@/lib/api';
 import { shortAddr } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
 
 interface LineItem { name: string; qty: number; unitPrice: number; lineTotal: number }
 interface Sale {
   sale_id: number;
   amount: string;
   currency: string;
+  charge_amount: string | null;
+  charge_currency: string | null;
+  fx_rate: string | null;
   store_number: string | null;
   till_number: string | null;
   latitude: string | null;
@@ -30,9 +34,8 @@ interface StoreTill {
 }
 interface SalesData { sales: Sale[]; byStoreTill: StoreTill[] }
 
-const sym = (c: string) => (c === 'USDC' || c === 'USD' ? '$' : 'R');
-const money = (v: string | number, c: string) =>
-  `${sym(c)}${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const sym = (c: string) => (c === 'USDC' || c === 'USD' ? '$' : c === 'MWK' ? 'MK' : 'R');
+const money = (v: string | number, c: string) => formatMoney(v, c);
 const itemsSummary = (items: LineItem[] | null) =>
   items && items.length ? items.map(i => `${i.qty}× ${i.name}`).join(', ') : '—';
 
@@ -47,12 +50,22 @@ const storeTillCols: Col<StoreTill>[] = [
 
 const saleCols: Col<Sale>[] = [
   { key: 'when', header: 'When', sort: s => s.created_at, render: s => new Date(s.created_at).toLocaleString() },
-  { key: 'store', header: 'Store', sort: s => s.store_number ?? '', render: s => s.store_number ?? '—' },
-  { key: 'till',  header: 'Till',  sort: s => s.till_number ?? '',  render: s => s.till_number ?? '—' },
+  { key: 'store', header: 'Store', sort: s => s.store_number ?? '', render: s => s.store_number ?? 'Head office' },
+  { key: 'till',  header: 'Till',  sort: s => s.till_number ?? '',  render: s => s.till_number ?? 'Web Sale' },
   { key: 'items', header: 'Items', search: s => itemsSummary(s.items),
     render: s => <span className="text-xs">{itemsSummary(s.items)}</span> },
-  { key: 'amount', header: 'Amount', sort: s => Number(s.amount),
-    render: s => <span className="font-semibold tabular-nums">{money(s.amount, s.currency)}</span>, className: 'text-right' },
+  { key: 'amount', header: 'Received', sort: s => Number(s.amount),
+    render: s => (
+      <span className="font-semibold tabular-nums">
+        {money(s.amount, s.currency)}
+        {s.charge_currency && s.charge_amount && s.charge_currency !== s.currency && (
+          <span className="block text-[11px] font-normal text-gray-500">
+            for {money(s.charge_amount, s.charge_currency)}
+            {s.fx_rate ? ` · 1 ${s.currency} = ${Number(s.fx_rate).toFixed(2)} ${s.charge_currency}` : ''}
+          </span>
+        )}
+      </span>
+    ), className: 'text-right' },
   { key: 'customer', header: 'Customer', search: s => `${s.consumer_tag ?? ''} ${s.consumer_wallet ?? ''}`,
     render: s => s.consumer_tag ? `@${s.consumer_tag}` : <span className="font-mono text-[11px]">{shortAddr(s.consumer_wallet ?? '')}</span> },
   { key: 'loc', header: 'Location', sort: s => (s.latitude ? 1 : 0),
@@ -74,7 +87,7 @@ export default function Sales() {
 
   return (
     <div className="space-y-4 max-w-5xl">
-      <h2 className="text-xl font-semibold text-brand-accent">Sales</h2>
+      <h2 className="text-xl font-semibold text-white">Sales</h2>
 
       {data && data.sales.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">

@@ -4,9 +4,11 @@ import { api } from '@/lib/api';
 import BottomNav from '@/components/BottomNav';
 
 interface TxDetail {
-  type?: 'topup' | 'conversion';
-  source?: string; reference?: string;       // top-up
-  from?: string; to?: string; rate?: string; fee?: string; // conversion
+  type?: 'topup' | 'conversion' | 'purchase' | 'change_voucher';
+  source?: string; reference?: string;
+  from?: string; to?: string; rate?: string; fee?: string;
+  merchant?: string; store?: string; till?: string;
+  items?: { name: string; qty: number; unitPrice?: number; lineTotal?: number }[];
 }
 interface Tx {
   event_id: string;
@@ -19,7 +21,13 @@ interface Tx {
   detail?: TxDetail;
 }
 
-const sym = (c?: string) => (c === 'USDC' || c === 'USD' ? '$' : c === 'ZAR' ? 'R' : '');
+const sym = (c?: string) => {
+  const u = (c ?? '').toUpperCase();
+  if (u === 'USDC' || u === 'USD') return '$';
+  if (u === 'ZAR') return 'R';
+  if (u === 'MWK') return 'MK';
+  return '';
+};
 
 export default function History() {
   const [txs, setTxs] = useState<Tx[]>([]);
@@ -33,13 +41,11 @@ export default function History() {
 
   return (
     <>
-      <div className="flex flex-col min-h-dvh pb-24">
-        <div className="px-6 pt-12 pb-4">
-          <h2 className="text-2xl font-bold text-white">Transaction History</h2>
-        </div>
-        <div className="flex-1 px-6 space-y-2">
+      <div className="flex flex-col min-h-dvh pb-24 px-6 pt-14">
+        <h1 className="text-3xl font-bold text-white mb-6">Transaction History</h1>
+        <div className="flex-1 space-y-2">
           {txs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-24 text-white text-sm gap-2">
+            <div className="flex flex-col items-center justify-center py-24 text-white/60 text-sm gap-2">
               <ArrowUpRight size={32} className="opacity-30" />
               No transactions yet
             </div>
@@ -48,21 +54,22 @@ export default function History() {
               <button
                 key={tx.event_id}
                 onClick={() => setSelected(tx)}
-                className="w-full flex items-center gap-4 bg-brand-card border border-brand-accent/20 rounded-2xl px-4 py-3 text-left active:scale-[0.99] transition-transform"
+                className="w-full flex items-center gap-4 bg-brand-accent rounded-2xl px-4 py-4 text-left text-white active:scale-[0.98] transition-transform"
               >
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-brand-accent/10">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/15">
                   {tx.direction === 'in'
-                    ? <ArrowDownLeft size={18} className="text-brand-accent" />
-                    : <ArrowUpRight  size={18} className="text-brand-accent" />}
+                    ? <ArrowDownLeft size={18} className="text-white" />
+                    : <ArrowUpRight  size={18} className="text-white" />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm text-brand-accent capitalize">{tx.event_type.replace(/_/g, ' ')}</p>
-                  <p className="text-brand-accent/50 text-xs">
+                  <p className="font-semibold text-sm text-white capitalize">{tx.event_type.replace(/_/g, ' ')}</p>
+                  <p className="text-white/70 text-xs">
                     {new Date(tx.created_at).toLocaleString('en-ZA')}
+                    {tx.detail?.type === 'purchase' && tx.detail.merchant && ` · ${tx.detail.merchant}`}
                     {tx.detail?.source && ` · ${tx.detail.source}`}
                   </p>
                 </div>
-                <p className="font-semibold text-sm text-brand-accent whitespace-nowrap">
+                <p className="font-bold text-sm text-white whitespace-nowrap">
                   {tx.direction === 'in' ? '+' : '−'}{sym(tx.currency)}{parseFloat(tx.amount_token).toFixed(2)}
                 </p>
               </button>
@@ -94,6 +101,22 @@ export default function History() {
                 {selected.detail.from && selected.detail.to && <Row label="Converted" value={`${selected.detail.from} → ${selected.detail.to}`} />}
                 {selected.detail.rate && <Row label="Rate" value={selected.detail.rate} />}
                 {selected.detail.fee  && <Row label="Fee"  value={selected.detail.fee} />}
+              </>}
+              {selected.detail?.type === 'change_voucher' && <>
+                {selected.detail.merchant && <Row label="Store" value={String(selected.detail.merchant)} />}
+                {(selected.detail.store || selected.detail.till) && (
+                  <Row label="Store / till" value={[selected.detail.store, selected.detail.till].filter(Boolean).join(' · ') || '—'} />
+                )}
+              </>}
+              {selected.detail?.type === 'purchase' && <>
+                {selected.detail.merchant && <Row label="Merchant" value={selected.detail.merchant} />}
+                {(selected.detail.store || selected.detail.till) && (
+                  <Row label="Store / till" value={[selected.detail.store, selected.detail.till].filter(Boolean).join(' · ') || '—'} />
+                )}
+                {selected.detail.items?.map((it, i) => (
+                  <Row key={i} label={it.qty > 1 ? `${it.qty} × ${it.name}` : it.name}
+                    value={`R${((it.lineTotal ?? it.qty * (it.unitPrice ?? 0))).toFixed(2)}`} />
+                ))}
               </>}
             </div>
 

@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Label, Select } from '@/components/ui/input';
 import { apiFetch, AuthError } from '@/lib/api';
-import { applyBrandColors } from '@/config/app';
+import { refreshAppConfig } from '@/hooks/useAppConfig';
 import { fmt } from '@/lib/utils';
 import { LogoUpload } from '@/components/LogoUpload';
 import { ConnectPrompt } from '@/components/ConnectPrompt';
@@ -118,9 +118,8 @@ export default function SettingsPage() {
     setSaving(key);
     try {
       await apiFetch(`/api/config/${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify({ value }) });
-      const updated = { ...(config ?? {}), [key]: value };
-      setConfig(updated);
-      applyBrandColors(updated);
+      await refreshAppConfig();
+      setConfig(c => ({ ...(c ?? {}), [key]: value }));
       setSaved(key); setTimeout(() => setSaved(null), 2000);
     } finally { setSaving(null); }
   }
@@ -348,6 +347,27 @@ export default function SettingsPage() {
         {configField('brand.color.bg', 'Background Color', 'color')}
         {configField('brand.color.accent', 'Accent Color', 'color')}
         {configField('brand.color.text', 'Text Color', 'color')}
+      </Card>}
+
+      {/* ── Revenue rates ── */}
+      {config && <Card className="space-y-4">
+        <CardHeader><CardTitle>Revenue</CardTitle></CardHeader>
+        <p className="text-sm text-gray-500 -mt-2">
+          Platform fee rates. Vault <strong>yield share</strong> is harvested from{' '}
+          <a href="/treasury" className="text-brand-accent underline">Treasury → Yield Harvesting</a>
+          {' '}(default 1000 bps / 10% via <code>PLATFORM_HARVEST_FEE_BPS</code> env until moved here).
+        </p>
+        <div>
+          {configField('revenue.fx_spread_bps', 'FX conversion spread (basis points)')}
+          <p className="text-xs text-gray-400 mt-1">Applied to consumer ZAR → USD conversions. 150 bps = 1.5%.</p>
+        </div>
+        <div>
+          {configField('revenue.settlement_fee_bps', 'Merchant settlement fee (basis points)')}
+          <p className="text-xs text-gray-400 mt-1">
+            Deducted from the fiat bank payout when a merchant settles. Tokens withdrawn include the fee;
+            the platform retains it when paying out.
+          </p>
+        </div>
       </Card>}
 
       {/* ── Pilot config — only shown when config is loaded from DB ── */}

@@ -7,28 +7,47 @@ import { X } from 'lucide-react';
 // preview) — surfaces a friendly error if the camera can't start.
 export function QrScanner({ onResult, onClose }: { onResult: (text: string) => void; onClose: () => void }) {
   const regionId = 'qr-reader-region';
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const onResultRef = useRef(onResult);
+  onResultRef.current = onResult;
   const [error, setError] = useState('');
 
   useEffect(() => {
     const scanner = new Html5Qrcode(regionId);
-    scannerRef.current = scanner;
     let done = false;
+    let started = false;
+    let cancelled = false;
 
     scanner
       .start(
         { facingMode: 'environment' },
         { fps: 10, qrbox: 240 },
-        (text) => { if (!done) { done = true; onResult(text); } },
+        (text) => {
+          if (!done) {
+            done = true;
+            onResultRef.current(text);
+          }
+        },
         () => { /* ignore per-frame decode misses */ },
       )
-      .catch(() => setError('Couldn’t start the camera. Check permissions, or paste a tag/address instead.'));
+      .then(() => { started = true; })
+      .catch(() => {
+        if (!cancelled) {
+          setError('Couldn’t start the camera. Check permissions, or paste a tag/address instead.');
+        }
+      });
 
     return () => {
-      // stop() rejects if it never started; swallow either way.
-      scanner.stop().then(() => scanner.clear()).catch(() => { try { scanner.clear(); } catch { /* noop */ } });
+      cancelled = true;
+      done = true;
+      if (!started) {
+        try { scanner.clear(); } catch { /* not started yet */ }
+        return;
+      }
+      scanner.stop()
+        .then(() => scanner.clear())
+        .catch(() => { try { scanner.clear(); } catch { /* noop */ } });
     };
-  }, [onResult]);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[70] bg-black/85 flex flex-col items-center justify-center px-6">

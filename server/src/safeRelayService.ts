@@ -13,6 +13,7 @@
 
 import { ethers } from 'ethers';
 import config from './config.js';
+import { recordGasFromReceipt } from './gasCostService.js';
 import { encodeWebAuthnSignature, encodeSafeContractSignature, type RawAssertion } from './safeWebAuthn.js';
 
 const SAFE_ABI = [
@@ -143,6 +144,7 @@ export async function relaySafeTx(params: {
     t.baseGas, t.gasPrice, t.gasToken, t.refundReceiver, signatures,
   );
   const receipt = await tx.wait() as ethers.TransactionReceipt;
+  await recordGasFromReceipt(receipt, 'relay');
   return receipt.hash;
 }
 

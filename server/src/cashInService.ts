@@ -7,7 +7,7 @@
 
 import db from './db.js';
 import config from './config.js';
-import { mintTreasuryZA, vaultAdminCredit } from './treasuryService.js';
+import { mintTreasuryToken, vaultAdminCredit } from './treasuryService.js';
 
 export interface CashInInput {
   wallet: string;
@@ -42,7 +42,7 @@ export async function cashIn(p: CashInInput): Promise<CashInResult> {
   }
 
   // 2. Mint TTZA backing into the Vault reserve, then credit the wallet's claim.
-  const mintTx   = await mintTreasuryZA(vault, p.amountUnits);
+  const mintTx   = await mintTreasuryToken(vault, p.amountUnits, p.currency);
   const creditTx = await vaultAdminCredit(p.wallet, p.amountUnits, p.currency);
 
   // 3. Record the on-chain tx hashes against the reference (audit link).

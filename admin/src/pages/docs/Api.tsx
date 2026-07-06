@@ -39,7 +39,7 @@ export default function Api() {
           [<Code>GET /api/consumer/balance</Code>, <Jwt />, 'Live on-chain token balances'],
           [<Code>GET /api/consumer/transactions</Code>, <Jwt />, 'Indexed + enriched history (top-up source, conversion rate/fee)'],
           [<Code>GET /api/consumer/kyc</Code>, <Jwt />, 'KYC level + spending limits'],
-          [<Code>POST /api/consumer/convert</Code>, <Jwt />, 'ZAR → USD on-ramp at live FX − platform spread (custodial ledger move; records fee)'],
+          [<Code>POST /api/consumer/convert</Code>, <Jwt />, 'ZAR ↔ USD at live FX − platform spread (vault ledger move; body: amount, from, to)'],
           [<Code>POST /api/consumer/redeem-voucher</Code>, <Jwt />, 'Redeem a spend voucher against the holder’s claim'],
           [<Code>POST /api/consumer/transfer/prepare</Code>, <Jwt />, 'Build a user-signed Vault.transfer (returns hash to sign)'],
           [<Code>POST /api/consumer/transfer/submit</Code>, <Jwt />, 'Relay the signed transfer (gasless)'],

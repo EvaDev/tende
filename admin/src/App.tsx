@@ -34,6 +34,7 @@ import ReportsRegistrations from '@/pages/reports/Registrations';
 import ReportsEvents from '@/pages/reports/Events';
 import ReportsTransfers from '@/pages/reports/Transfers';
 import ReportsBalances from '@/pages/reports/Balances';
+import ReportsSettlements from '@/pages/reports/Settlements';
 import ReportsSales from '@/pages/reports/Sales';
 import ReportsTreasury from '@/pages/reports/Treasury';
 import ReportsRevenue from '@/pages/reports/Revenue';
@@ -78,6 +79,7 @@ export default function App() {
           <Route path="events"        element={<ReportsEvents />} />
           <Route path="transfers" element={<ReportsTransfers />} />
           <Route path="balances"  element={<ReportsBalances />} />
+          <Route path="settlements" element={<ReportsSettlements />} />
           <Route path="sales"     element={<ReportsSales />} />
           <Route path="treasury"  element={<ReportsTreasury />} />
           <Route path="revenue"   element={<ReportsRevenue />} />

@@ -1,21 +1,25 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Users, Landmark, LogOut, ScanLine, Receipt, UserCog } from 'lucide-react';
+import { LayoutDashboard, Users, Landmark, LogOut, ScanLine, Receipt, UserCog, Package, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMember } from '@/hooks/useMember';
+import { useMerchantLogo } from '@/hooks/useMerchantLogo';
 import Login from '@/pages/Login';
-import logoUrl from '@/assets/iMali_icon.png';
+import { getAppName, getAppLogo } from '@/lib/brand';
 
 const NAV = [
-  { to: '/',           label: 'Dashboard',    icon: LayoutDashboard },
+  { to: '/',           label: 'Dashboard',     icon: LayoutDashboard },
   { to: '/pos',         label: 'Point of Sale', icon: ScanLine },
+  { to: '/products',    label: 'Products',      icon: Package },
   { to: '/sales',       label: 'Sales',         icon: Receipt },
   { to: '/settlement',  label: 'Settlement',    icon: Landmark },
   { to: '/members',     label: 'Team',          icon: Users, orgAdminOnly: true },
   { to: '/my-business', label: 'My Business',   icon: UserCog, orgAdminOnly: true },
+  { to: '/about',       label: 'About',         icon: Info },
 ];
 
 export default function Layout() {
   const { member, loading, isOrgAdmin, signOut } = useMember();
+  const merchantLogo = useMerchantLogo(!!member);
 
   if (loading) {
     return (
@@ -31,9 +35,9 @@ export default function Layout() {
     <div className="flex h-screen overflow-hidden">
       <aside className="w-56 flex-shrink-0 bg-brand-accent text-white flex flex-col">
         <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3">
-          <img src={logoUrl} alt="iMali" className="w-9 h-9 object-contain flex-shrink-0" />
+          <img src={getAppLogo()} alt={getAppName()} className="w-9 h-9 object-contain flex-shrink-0" />
           <div className="flex-1">
-            <span className="text-xl font-bold tracking-tight">iMali</span>
+            <span className="text-xl font-bold tracking-tight">{getAppName()}</span>
             <span className="block text-xs text-white/50">Merchant</span>
           </div>
         </div>
@@ -61,17 +65,28 @@ export default function Layout() {
           ))}
         </nav>
 
-        <div className="px-4 py-4 border-t border-white/10 space-y-2">
-          <div className="text-sm font-semibold text-white truncate" title={member.merchantName}>
-            {member.merchantName}
+        <div className="px-3 py-4 border-t border-white/10 space-y-2">
+          <div className="w-full">
+            {merchantLogo ? (
+              <img
+                src={merchantLogo}
+                alt={member.merchantName}
+                className="w-full max-h-24 object-contain"
+              />
+            ) : (
+              <div className="w-full h-16 rounded-lg bg-white/10" />
+            )}
+            <p className="text-sm font-semibold text-white text-center mt-2 truncate" title={member.merchantName}>
+              {member.merchantName}
+            </p>
           </div>
-          <span className="block text-xs font-medium text-white/60 uppercase tracking-wide">
+          <span className="block text-xs font-medium text-white/70 uppercase tracking-wide">
             {member.role.replace('_', ' ')}
           </span>
-          <p className="text-xs text-white/40 truncate">{member.displayName ?? member.email}</p>
+          <p className="text-xs text-white/70 truncate">{member.displayName ?? member.email}</p>
           <button
             onClick={signOut}
-            className="flex items-center gap-2 text-xs text-white/60 hover:text-white pt-1"
+            className="flex items-center gap-2 text-xs text-white/70 hover:text-white pt-1"
           >
             <LogOut size={14} /> Sign out
           </button>

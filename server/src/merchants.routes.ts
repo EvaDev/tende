@@ -20,33 +20,11 @@ import { requireAdmin }  from './admin.middleware.js';
 import { requireAuth }   from './auth.middleware.js';
 import { verifyAndConsume } from './authNonce.js';
 import { registerMerchantOnchain, type MerchantOnchainResult } from './treasuryService.js';
+import { ensureHeadOfficeStore } from './storeService.js';
+import { SQL_STORE_LABEL, SQL_TILL_LABEL } from './salesLabels.js';
+import { getAcceptedCurrencies, seedAcceptedCurrency } from './merchantAcceptedCurrencies.js';
 
 const router = express.Router();
-
-// ── accepted-currency helpers (resilient to migration 013 not yet applied) ─────
-async function seedAcceptedCurrency(merchantId: string, currencyCode: string): Promise<void> {
-  try {
-    await db.query(
-      `INSERT INTO merchant_accepted_currencies (merchant_id, currency_code)
-       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [merchantId, currencyCode.toUpperCase()],
-    );
-  } catch (e) {
-    console.warn(`[merchants] seed accepted_currencies failed for ${merchantId}:`, (e as Error).message);
-  }
-}
-
-async function getAcceptedCurrencies(merchantId: string): Promise<string[]> {
-  try {
-    const r = await db.query<{ currency_code: string }>(
-      `SELECT currency_code FROM merchant_accepted_currencies WHERE merchant_id = $1 ORDER BY currency_code`,
-      [merchantId],
-    );
-    return r.rows.map(x => x.currency_code);
-  } catch {
-    return []; // table may not exist yet
-  }
-}
 
 // ── POST /api/merchants/register ──────────────────────────────────────────────
 // Self-service merchant onboarding. A new wallet proves ownership via a signed
@@ -249,22 +227,24 @@ router.get('/me/sales', requireAuth, async (req: Request, res: Response): Promis
     if (!id) { res.status(404).json({ error: 'No merchant for this wallet' }); return; }
 
     const sales = await db.query(
-      `SELECT sale_id, amount, currency, store_number, till_number, latitude, longitude,
-              items, consumer_tag, consumer_wallet, tx_hash, status, created_at
+      `SELECT sale_id, amount, currency, charge_amount, charge_currency, fx_rate,
+              ${SQL_STORE_LABEL} AS store_number,
+              ${SQL_TILL_LABEL} AS till_number,
+              latitude, longitude, items, consumer_tag, consumer_wallet, tx_hash, status, created_at
          FROM merchant_sales WHERE merchant_id = $1
         ORDER BY created_at DESC LIMIT 500`,
       [id],
     );
 
     const byStoreTill = await db.query(
-      `SELECT COALESCE(store_number, '—') AS store_number,
-              COALESCE(till_number, '—')  AS till_number,
+      `SELECT ${SQL_STORE_LABEL} AS store_number,
+              ${SQL_TILL_LABEL} AS till_number,
               currency,
               count(*)::int    AS sales,
               SUM(amount)::text AS total,
               MAX(created_at)  AS last_sale
          FROM merchant_sales WHERE merchant_id = $1
-        GROUP BY store_number, till_number, currency
+        GROUP BY ${SQL_STORE_LABEL}, ${SQL_TILL_LABEL}, currency
         ORDER BY SUM(amount) DESC`,
       [id],
     );
@@ -434,6 +414,7 @@ router.post('/', requireAdmin, async (req: import('express').Request, res: impor
     const merchant = result.rows[0];
 
     await seedAcceptedCurrency(merchant.merchant_id, merchant.currency_code);
+    await ensureHeadOfficeStore(merchant.merchant_id);
 
     // Mirror the self-service flow: register the merchant on-chain (TreasuryToken
     // whitelist + Vault trusted counterparty). Best-effort; never fails the create.

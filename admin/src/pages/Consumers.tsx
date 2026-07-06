@@ -12,6 +12,8 @@ interface Consumer {
   kyc_level: number | string;
   kyc_level_name?: string;
   ens_subdomain?: string;
+  country_code?: string;
+  country_name?: string;
   idos_profile: boolean;
   created_at: string;
 }
@@ -20,9 +22,30 @@ const cols: Col<Consumer>[] = [
   { key: 'tag', header: 'Tag',
     sort: c => c.ens_subdomain ?? '', search: c => c.ens_subdomain ?? '',
     render: c => <span className="font-medium">{c.ens_subdomain ? `@${c.ens_subdomain}` : '—'}</span> },
+  { key: 'country', header: 'Country',
+    sort: c => c.country_code ?? '',
+    search: c => `${c.country_code ?? ''} ${c.country_name ?? ''}`,
+    render: c => (
+      <span title={c.country_name ?? c.country_code}>
+        {c.country_code ?? '—'}
+        {c.country_name && c.country_code ? (
+          <span className="block text-xs text-gray-400">{c.country_name}</span>
+        ) : null}
+      </span>
+    ) },
   { key: 'wallet', header: 'Wallet',
     search: c => c.wallet_address,
-    render: c => <span className="font-mono text-xs">{shortAddr(c.wallet_address)}</span> },
+    render: c => (
+      <a
+        href={`https://sepolia.etherscan.io/address/${c.wallet_address}`}
+        target="_blank"
+        rel="noreferrer"
+        className="font-mono text-xs underline hover:text-brand-accent"
+        onClick={e => e.stopPropagation()}
+      >
+        {shortAddr(c.wallet_address)}
+      </a>
+    ) },
   { key: 'safe', header: 'Safe',
     render: c => <span className="font-mono text-xs">{c.safe_address ? shortAddr(c.safe_address) : '—'}</span> },
   { key: 'kyc', header: 'KYC Level', sort: c => Number(c.kyc_level),
@@ -54,7 +77,7 @@ export default function Consumers() {
           rows={rows}
           initialSort={{ key: 'joined', dir: 'desc' }}
           searchable
-          searchPlaceholder="Search tag or wallet…"
+          searchPlaceholder="Search tag, wallet or country…"
         />
       </Card>
     </div>
