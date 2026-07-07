@@ -14,51 +14,71 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   exit 1
 fi
 
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
+# Read a single KEY=value from deploy/env without sourcing secrets (avoids $ expansion).
+env_val() {
+  local key="$1" default="${2:-}"
+  local line
+  line="$(grep -m1 "^${key}=" "${ENV_FILE}" 2>/dev/null || true)"
+  if [[ -z "${line}" ]]; then
+    printf '%s' "${default}"
+  else
+    printf '%s' "${line#*=}"
+  fi
+}
 
-export IMALI_ROOT="${IMALI_ROOT:-$ROOT}"
-export CADDY_PORT="${CADDY_PORT:-8080}"
-export TUNNEL_NAME="${TUNNEL_NAME:-imali-mac-mini}"
-export DOMAIN="${DOMAIN:-imali.app}"
+PG_USER="$(env_val PG_USER imali)"
+PG_PASSWORD="$(env_val PG_PASSWORD)"
+PG_DATABASE="$(env_val PG_DATABASE imali)"
+PG_HOST="$(env_val PG_HOST localhost)"
+PG_PORT="$(env_val PG_PORT 5432)"
+DOMAIN="$(env_val DOMAIN imali.app)"
+TUNNEL_NAME="$(env_val TUNNEL_NAME imali-mac-mini)"
+IMALI_ROOT="$(env_val IMALI_ROOT "${ROOT}")"
+CADDY_PORT="$(env_val CADDY_PORT 8080)"
 
 DATABASE_URL="postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:${PG_PORT}/${PG_DATABASE}"
-CORS_ORIGINS="https://app.${DOMAIN},https://admin.${DOMAIN},https://merchant.${DOMAIN}"
-WEBAUTHN_ORIGIN="https://app.${DOMAIN},https://merchant.${DOMAIN}"
-IDOS_ISSUER_URI="https://api.${DOMAIN}/idos"
+DEFAULT_CORS="https://app.${DOMAIN},https://admin.${DOMAIN},https://merchant.${DOMAIN}"
+DEFAULT_WEBAUTHN="https://app.${DOMAIN},https://merchant.${DOMAIN}"
+DEFAULT_IDOS="https://api.${DOMAIN}/idos"
 
 tmp="$(mktemp)"
 have_db=0 have_cors=0 have_webauthn_origin=0 have_rp_id=0 have_idos=0
 
 while IFS= read -r line || [[ -n "$line" ]]; do
-  [[ "$line" =~ ^[[:space:]]*# ]] && { echo "$line" >> "$tmp"; continue; }
-  [[ -z "${line// }" ]] && { echo >> "$tmp"; continue; }
+  [[ "$line" =~ ^[[:space:]]*# ]] && { printf '%s\n' "$line" >> "$tmp"; continue; }
+  [[ -z "${line// }" ]] && { printf '\n' >> "$tmp"; continue; }
+
   if [[ "$line" =~ ^DATABASE_URL= ]]; then
-    echo "DATABASE_URL=${DATABASE_URL}" >> "$tmp"; have_db=1; continue
+    printf 'DATABASE_URL=%s\n' "${DATABASE_URL}" >> "$tmp"; have_db=1; continue
   fi
   if [[ "$line" =~ ^CORS_ORIGINS= ]]; then
-    echo "CORS_ORIGINS=${CORS_ORIGINS}" >> "$tmp"; have_cors=1; continue
+    printf '%s\n' "$line" >> "$tmp"; have_cors=1; continue
   fi
   if [[ "$line" =~ ^WEBAUTHN_ORIGIN= ]]; then
-    echo "WEBAUTHN_ORIGIN=${WEBAUTHN_ORIGIN}" >> "$tmp"; have_webauthn_origin=1; continue
+    printf '%s\n' "$line" >> "$tmp"; have_webauthn_origin=1; continue
   fi
   if [[ "$line" =~ ^WEBAUTHN_RP_ID= ]]; then
-    echo "WEBAUTHN_RP_ID=${DOMAIN}" >> "$tmp"; have_rp_id=1; continue
+    printf '%s\n' "$line" >> "$tmp"; have_rp_id=1; continue
   fi
   if [[ "$line" =~ ^IDOS_ISSUER_URI= ]]; then
-    echo "IDOS_ISSUER_URI=${IDOS_ISSUER_URI}" >> "$tmp"; have_idos=1; continue
+    printf '%s\n' "$line" >> "$tmp"; have_idos=1; continue
   fi
-  # shellcheck disable=SC2097,SC2098
-  eval "echo \"$line\"" >> "$tmp"
+
+  # Secrets and other values — copy literally (never eval; private keys may contain $).
+  if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+    printf '%s\n' "$line" >> "$tmp"
+    continue
+  fi
+
+  printf '%s\n' "$line" >> "$tmp"
 done < "${ENV_FILE}"
 
-# Always inject composed values (deploy/env only needs PG_* etc.)
 {
-  (( have_db )) || echo "DATABASE_URL=${DATABASE_URL}"
-  (( have_cors )) || echo "CORS_ORIGINS=${CORS_ORIGINS}"
-  (( have_rp_id )) || echo "WEBAUTHN_RP_ID=${DOMAIN}"
-  (( have_webauthn_origin )) || echo "WEBAUTHN_ORIGIN=${WEBAUTHN_ORIGIN}"
-  (( have_idos )) || echo "IDOS_ISSUER_URI=${IDOS_ISSUER_URI}"
+  (( have_db )) || printf 'DATABASE_URL=%s\n' "${DATABASE_URL}"
+  (( have_cors )) || printf 'CORS_ORIGINS=%s\n' "${DEFAULT_CORS}"
+  (( have_rp_id )) || printf 'WEBAUTHN_RP_ID=%s\n' "${DOMAIN}"
+  (( have_webauthn_origin )) || printf 'WEBAUTHN_ORIGIN=%s\n' "${DEFAULT_WEBAUTHN}"
+  (( have_idos )) || printf 'IDOS_ISSUER_URI=%s\n' "${DEFAULT_IDOS}"
 } >> "$tmp"
 
 mv "$tmp" "$OUT"
