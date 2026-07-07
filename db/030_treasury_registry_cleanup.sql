@@ -6,8 +6,8 @@
 INSERT INTO contract_deployments (contract_name, proxy_address, impl_address, version, chain_id, deploy_tx, notes)
 SELECT
   'TreasuryToken',
-  impl_address,
-  impl_address,
+  COALESCE(impl_address, proxy_address),
+  COALESCE(impl_address, proxy_address),
   COALESCE(version, '1.1.0'),
   chain_id,
   deploy_tx,
