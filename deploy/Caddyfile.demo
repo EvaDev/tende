@@ -1,0 +1,25 @@
+# Demo mode — no custom domain required.
+# Serves consumer UI + /api on any Host header (works with *.trycloudflare.com).
+#
+#   IMALI_ROOT=$PWD CADDY_PORT=8080 caddy run --config deploy/Caddyfile.demo
+#   cloudflared tunnel --url http://127.0.0.1:8080
+
+{
+	auto_https off
+}
+
+:{$CADDY_PORT:8080} {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:3001
+	}
+
+	handle /health {
+		reverse_proxy 127.0.0.1:3001
+	}
+
+	handle {
+		root * {$IMALI_ROOT}/consumer/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

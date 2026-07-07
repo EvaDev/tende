@@ -2,6 +2,30 @@
 
 Production runbook for the iMali / 1Remit stack: Postgres, four Node apps, Caddy reverse proxy, and a named Cloudflare tunnel with WebAuthn origins wired for the tunnel hostnames.
 
+## Demo without a domain (free, no DNS)
+
+Skip tunnel login, nameservers, and `imali.app` entirely. Cloudflare gives you a temporary public URL like `https://abc-xyz.trycloudflare.com`:
+
+```bash
+pm2 start deploy/ecosystem.config.cjs   # API on :3001
+./deploy/demo-tunnel.sh                 # consumer UI + /api over HTTPS
+```
+
+No Cloudflare account zone selection required. The URL **changes each restart**.
+
+| Mode | Domain needed? | URL | Apps |
+|------|----------------|-----|------|
+| **Demo** (`demo-tunnel.sh`) | No | `*.trycloudflare.com` (ephemeral) | Consumer + API |
+| **Production** (below) | Yes | `app.yourdomain.com` etc. | All four apps |
+
+**Passkeys on demo URL:** after the tunnel starts, set `WEBAUTHN_RP_ID=trycloudflare.com` and `WEBAUTHN_ORIGIN` / `CORS_ORIGINS` to the exact `https://….trycloudflare.com` URL, then `./deploy/link-env.sh && pm2 restart imali-server`.
+
+**Admin / merchant on demo:** those apps expect separate subdomains in production. For a local demo, run `npm run dev:admin` or `npm run dev:merchant` on the Mac Mini (LAN or SSH port-forward).
+
+---
+
+## Production (custom domain)
+
 ## Architecture
 
 ```
