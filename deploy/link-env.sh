@@ -28,17 +28,38 @@ WEBAUTHN_ORIGIN="https://app.${DOMAIN},https://merchant.${DOMAIN}"
 IDOS_ISSUER_URI="https://api.${DOMAIN}/idos"
 
 tmp="$(mktemp)"
+have_db=0 have_cors=0 have_webauthn_origin=0 have_rp_id=0 have_idos=0
+
 while IFS= read -r line || [[ -n "$line" ]]; do
   [[ "$line" =~ ^[[:space:]]*# ]] && { echo "$line" >> "$tmp"; continue; }
   [[ -z "${line// }" ]] && { echo >> "$tmp"; continue; }
-  [[ "$line" =~ ^DATABASE_URL= ]] && { echo "DATABASE_URL=${DATABASE_URL}" >> "$tmp"; continue; }
-  [[ "$line" =~ ^CORS_ORIGINS= ]] && { echo "CORS_ORIGINS=${CORS_ORIGINS}" >> "$tmp"; continue; }
-  [[ "$line" =~ ^WEBAUTHN_ORIGIN= ]] && { echo "WEBAUTHN_ORIGIN=${WEBAUTHN_ORIGIN}" >> "$tmp"; continue; }
-  [[ "$line" =~ ^WEBAUTHN_RP_ID= ]] && { echo "WEBAUTHN_RP_ID=${DOMAIN}" >> "$tmp"; continue; }
-  [[ "$line" =~ ^IDOS_ISSUER_URI= ]] && { echo "IDOS_ISSUER_URI=${IDOS_ISSUER_URI}" >> "$tmp"; continue; }
+  if [[ "$line" =~ ^DATABASE_URL= ]]; then
+    echo "DATABASE_URL=${DATABASE_URL}" >> "$tmp"; have_db=1; continue
+  fi
+  if [[ "$line" =~ ^CORS_ORIGINS= ]]; then
+    echo "CORS_ORIGINS=${CORS_ORIGINS}" >> "$tmp"; have_cors=1; continue
+  fi
+  if [[ "$line" =~ ^WEBAUTHN_ORIGIN= ]]; then
+    echo "WEBAUTHN_ORIGIN=${WEBAUTHN_ORIGIN}" >> "$tmp"; have_webauthn_origin=1; continue
+  fi
+  if [[ "$line" =~ ^WEBAUTHN_RP_ID= ]]; then
+    echo "WEBAUTHN_RP_ID=${DOMAIN}" >> "$tmp"; have_rp_id=1; continue
+  fi
+  if [[ "$line" =~ ^IDOS_ISSUER_URI= ]]; then
+    echo "IDOS_ISSUER_URI=${IDOS_ISSUER_URI}" >> "$tmp"; have_idos=1; continue
+  fi
   # shellcheck disable=SC2097,SC2098
   eval "echo \"$line\"" >> "$tmp"
 done < "${ENV_FILE}"
+
+# Always inject composed values (deploy/env only needs PG_* etc.)
+{
+  (( have_db )) || echo "DATABASE_URL=${DATABASE_URL}"
+  (( have_cors )) || echo "CORS_ORIGINS=${CORS_ORIGINS}"
+  (( have_rp_id )) || echo "WEBAUTHN_RP_ID=${DOMAIN}"
+  (( have_webauthn_origin )) || echo "WEBAUTHN_ORIGIN=${WEBAUTHN_ORIGIN}"
+  (( have_idos )) || echo "IDOS_ISSUER_URI=${IDOS_ISSUER_URI}"
+} >> "$tmp"
 
 mv "$tmp" "$OUT"
 chmod 600 "$OUT"
