@@ -7,9 +7,14 @@
     "dev": "concurrently -k -n server,admin,consumer,merchant -c green,cyan,magenta,yellow \"cd server && npm run dev\" \"cd admin && npm run dev\" \"cd consumer && npm run dev\" \"cd merchant && npm run dev\"",
     "dev:admin": "concurrently -k -n server,admin -c green,cyan \"cd server && npm run dev\" \"cd admin && npm run dev\"",
     "dev:consumer": "concurrently -k -n server,consumer -c green,magenta \"cd server && npm run dev\" \"cd consumer && npm run dev\"",
-    "dev:merchant": "concurrently -k -n server,merchant -c green,yellow \"cd server && npm run dev\" \"cd merchant && npm run dev\""
+    "dev:merchant": "concurrently -k -n server,merchant -c green,yellow \"cd server && npm run dev\" \"cd merchant && npm run dev\"",
+    "build:all": "bash deploy/build-all.sh",
+    "deploy:setup": "bash deploy/setup.sh",
+    "deploy:migrate": "bash deploy/migrate-db.sh",
+    "export:docs-pdf": "node scripts/export-docs-pdf.mjs"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "playwright": "^1.61.1"
   }
 }

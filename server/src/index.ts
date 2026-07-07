@@ -49,7 +49,13 @@ const app = express();
 // ── Middleware ────────────────────────────────────────────────────────────────
 
 app.use(cors({
-  origin:      config.server.env === 'production' ? 'https://app.imali.app' : true,
+  origin: config.server.env === 'production'
+    ? (origin, callback) => {
+        // Same-origin or non-browser clients may omit Origin.
+        if (!origin || config.cors.origins.includes(origin)) callback(null, true);
+        else callback(new Error(`CORS blocked origin: ${origin}`));
+      }
+    : true,
   credentials: true,
 }));
 

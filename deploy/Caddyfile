@@ -1,0 +1,55 @@
+# Reverse proxy for the iMali stack on the Mac Mini.
+# Cloudflared terminates TLS at the edge and forwards plain HTTP here.
+# Start with: caddy run --config deploy/Caddyfile --adapter caddyfile
+#
+# Required env (set in deploy/env before starting):
+#   DOMAIN      — e.g. imali.app
+#   IMALI_ROOT  — absolute path to this repo
+#   CADDY_PORT  — default 8080
+
+{
+	# No local TLS — Cloudflare handles HTTPS at the tunnel edge.
+	auto_https off
+}
+
+:{$CADDY_PORT:8080} {
+	@api host api.{$DOMAIN}
+	handle @api {
+		reverse_proxy 127.0.0.1:3001
+	}
+
+	@app host app.{$DOMAIN}
+	handle @app {
+		root * {$IMALI_ROOT}/consumer/dist
+		handle /api/* {
+			reverse_proxy 127.0.0.1:3001
+		}
+		try_files {path} /index.html
+		file_server
+	}
+
+	@admin host admin.{$DOMAIN}
+	handle @admin {
+		root * {$IMALI_ROOT}/admin/dist
+		handle /api/* {
+			reverse_proxy 127.0.0.1:3001
+		}
+		handle /idos* {
+			reverse_proxy 127.0.0.1:3001
+		}
+		try_files {path} /index.html
+		file_server
+	}
+
+	@merchant host merchant.{$DOMAIN}
+	handle @merchant {
+		root * {$IMALI_ROOT}/merchant/dist
+		handle /api/* {
+			reverse_proxy 127.0.0.1:3001
+		}
+		try_files {path} /index.html
+		file_server
+	}
+
+	respond "iMali: unknown host" 404
+}

@@ -18,8 +18,18 @@ function optional(key: string, fallback = ''): string {
 export const config = {
   server: {
     env:      optional('NODE_ENV', 'development'),
-    port:     parseInt(optional('PORT', '5173')),
+    port:     parseInt(optional('PORT', '3001')),
     logLevel: optional('LOG_LEVEL', 'info'),
+  },
+
+  // Allowed browser origins for credentialed API calls in production.
+  cors: {
+    get origins(): string[] {
+      return optional(
+        'CORS_ORIGINS',
+        'https://app.imali.app,https://admin.imali.app,https://merchant.imali.app',
+      ).split(',').map(s => s.trim()).filter(Boolean);
+    },
   },
 
   db: {

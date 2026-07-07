@@ -1,0 +1,6 @@
+# Local deployment secrets — never commit
+env
+cloudflared-credentials.json
+cloudflared-config.yml
+logs/
+*.pem
