@@ -7,6 +7,7 @@ import {ERC1967Proxy}     from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Pro
 import {TreasuryToken} from "../src/TreasuryToken.sol";
 import {Vault}         from "../src/Vault.sol";
 import {Consumer}      from "../src/Consumer.sol";
+import {SessionTransferModule} from "../src/SessionTransferModule.sol";
 
 /// @title Deploy
 /// @notice Deploys and wires all 1Remit contracts in a single broadcast.
@@ -35,6 +36,7 @@ contract Deploy is Script {
     address internal vault;
     address internal consumerImpl;
     address internal consumer;
+    address internal sessionModule;
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_ADMIN_PRIVATE_KEY");
@@ -177,6 +179,10 @@ contract Deploy is Script {
         za.addToWhitelist(admin);
         zw.addToWhitelist(admin);
 
+        // SessionTransferModule — cheaper per-tx auth when enabled in Admin Settings.
+        sessionModule = address(new SessionTransferModule(vault));
+        c.setSessionTransferModule(sessionModule);
+
         // Consumer roles for backend
         c.grantRole(c.REGISTRAR_ROLE(),   backend);
         c.grantRole(c.KYC_UPDATER_ROLE(), backend);
@@ -196,6 +202,7 @@ contract Deploy is Script {
         vm.serializeAddress(obj, "vaultImpl",    vaultImpl);
         vm.serializeAddress(obj, "vault",        vault);
         vm.serializeAddress(obj, "consumerImpl", consumerImpl);
+        vm.serializeAddress(obj, "sessionModule", sessionModule);
         string memory json = vm.serializeAddress(obj, "consumer", consumer);
 
         string memory outPath = string.concat("deployments/", vm.toString(block.chainid), ".json");
@@ -215,6 +222,7 @@ contract Deploy is Script {
         console2.log("Vault proxy  :", vault);
         console2.log("Consumer impl:", consumerImpl);
         console2.log("Consumer proxy:", consumer);
+        console2.log("SessionTransferModule:", sessionModule);
         console2.log("");
         console2.log("Post-deploy checklist:");
         console2.log("  1. Whitelist Consumer proxy in Pimlico paymaster (pm_sponsorUserOperation)");
@@ -223,5 +231,6 @@ contract Deploy is Script {
         console2.log("  4. Compliance gate is ON: TT transfers limited to consumers +");
         console2.log("     whitelisted platform/merchants; Vault transfers require both KYC'd");
         console2.log("  5. Whitelist each merchant wallet on TTZA/TTZW at onboarding (COMPLIANCE_ROLE)");
+        console2.log("  6. Set SESSION_TRANSFER_MODULE_ADDRESS=", sessionModule);
     }
 }

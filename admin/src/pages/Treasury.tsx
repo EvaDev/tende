@@ -130,7 +130,7 @@ function DevCashInPanel({ onDone }: { onDone: () => void }) {
       </p>
       <div className="flex flex-col sm:flex-row gap-2">
         <input
-          value={to} onChange={e => setTo(e.target.value)} placeholder="Recipient: 0x… or tag (e.g. es1)"
+          value={to} onChange={e => setTo(e.target.value)} placeholder="Recipient: @tag, account #, or 0x…"
           className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
         />
         <input
@@ -235,7 +235,7 @@ function DevKycPanel() {
         Set a consumer’s on-chain KYC level (the Vault transfer gate reads this). Level 1+ is required to send.
       </p>
       <div className="flex flex-col sm:flex-row gap-2">
-        <input value={wallet} onChange={e => setWallet(e.target.value)} placeholder="Wallet (0x…) or @tag"
+        <input value={wallet} onChange={e => setWallet(e.target.value)} placeholder="Wallet (0x…), @tag, or account #"
           className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
         <select value={level} onChange={e => setLevel(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
           {[0, 1, 2, 3].map(n => <option key={n} value={n}>Level {n}</option>)}

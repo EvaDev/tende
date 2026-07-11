@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Shield, Copy, CheckCheck, IdCard } from 'lucide-react';
+import { LogOut, Shield, Copy, CheckCheck, IdCard, Eye, EyeOff } from 'lucide-react';
 import { api } from '@/lib/api';
 import { logout } from '@/lib/auth';
-import { getEnsParentDomain } from '@/lib/brand';
 import BottomNav from '@/components/BottomNav';
 
 interface Profile {
   walletAddress: string; ensSubdomain?: string; countryCode: string;
+  globalConsumerId?: number | null;
   displayName?: string | null; mobileNumber?: string | null; hasName?: boolean; hasMobile?: boolean;
   kyc: { levelId: number; levelName: string; allowsUsdSavings: boolean; allowsRemittance: boolean };
 }
@@ -16,6 +16,7 @@ export default function Account() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [copied, setCopied]   = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
 
   useEffect(() => { api.get<Profile>('/consumer/me').then(setProfile).catch(() => {}); }, []);
 
@@ -37,16 +38,33 @@ export default function Account() {
               <div className="w-14 h-14 rounded-2xl bg-white/15 flex items-center justify-center text-2xl font-bold text-white">
                 {profile?.ensSubdomain?.[0]?.toUpperCase() ?? '?'}
               </div>
-              <div>
+              <div className="flex-1 min-w-0">
                 <p className="font-bold text-lg text-white">@{profile?.ensSubdomain ?? '—'}</p>
-                <p className="text-white/70 text-xs">{profile?.ensSubdomain}.{getEnsParentDomain()}</p>
               </div>
             </div>
             {profile?.walletAddress && (
-              <button onClick={copy} className="w-full flex items-center justify-between bg-white/10 rounded-xl px-4 py-3">
-                <span className="font-mono text-xs text-white/70 truncate">{profile.walletAddress}</span>
-                {copied ? <CheckCheck size={16} className="text-white shrink-0" /> : <Copy size={16} className="text-white/60 shrink-0" />}
-              </button>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowWallet(v => !v)}
+                  className="flex items-center gap-2 text-xs text-white/70"
+                >
+                  {showWallet ? <EyeOff size={14} /> : <Eye size={14} />}
+                  {showWallet ? 'Hide wallet address' : 'Show wallet address'}
+                </button>
+                {showWallet && (
+                  <button
+                    type="button"
+                    onClick={copy}
+                    className="w-full flex items-center justify-between bg-white/10 rounded-xl px-4 py-3"
+                  >
+                    <span className="font-mono text-xs text-white/70 truncate">{profile.walletAddress}</span>
+                    {copied
+                      ? <CheckCheck size={16} className="text-white shrink-0" />
+                      : <Copy size={16} className="text-white/60 shrink-0" />}
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
@@ -57,6 +75,7 @@ export default function Account() {
               <span className="font-semibold text-white">Your details</span>
             </div>
             {[
+              ['Account number', profile?.globalConsumerId != null ? String(profile.globalConsumerId) : '—'],
               ['Name',   profile?.displayName  || (profile?.hasName   ? 'On file' : 'Not provided yet')],
               ['Mobile', profile?.mobileNumber || (profile?.hasMobile ? 'On file' : 'Not provided yet')],
               ['Country', profile?.countryCode],

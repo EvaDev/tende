@@ -17,6 +17,7 @@ import { fromMinorUnits } from './productHelpers.js';
 import { spendCurrencyForCountry } from './currencyHelper.js';
 import { resolveStoreTill } from './salesLabels.js';
 import { executeConversion } from './conversionService.js';
+import { resolveWalletOrTag } from './walletResolve.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -37,7 +38,7 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
     const result = await db.query(
       `SELECT
          c.consumer_id, c.wallet_address, c.country_code, c.ens_subdomain,
-         c.source_system, c.kyc_level_id, c.display_name, c.mobile_number,
+         c.global_consumer_id, c.source_system, c.kyc_level_id, c.display_name, c.mobile_number,
          (c.display_name_hash IS NOT NULL) AS has_name_hash,
          (c.mobile_hash IS NOT NULL)       AS has_mobile_hash,
          k.level_name, k.allows_usd_savings, k.allows_remittance, k.allows_merchant_spend
@@ -54,16 +55,17 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
 
     const c = result.rows[0];
     res.json({
-      consumerId:    c.consumer_id,
-      walletAddress: c.wallet_address,
-      countryCode:   c.country_code,
-      ensSubdomain:  c.ens_subdomain,
-      sourceSystem:  c.source_system,
-      displayName:   c.display_name ?? null,
-      mobileNumber:  c.mobile_number ?? null,
+      consumerId:       c.consumer_id,
+      globalConsumerId: c.global_consumer_id != null ? Number(c.global_consumer_id) : null,
+      walletAddress:    c.wallet_address,
+      countryCode:      c.country_code,
+      ensSubdomain:     c.ens_subdomain,
+      sourceSystem:     c.source_system,
+      displayName:      c.display_name ?? null,
+      mobileNumber:     c.mobile_number ?? null,
       // Whether name/mobile are on file at all (plaintext kept only for POC).
-      hasName:       c.display_name != null || c.has_name_hash === true,
-      hasMobile:     c.mobile_number != null || c.has_mobile_hash === true,
+      hasName:          c.display_name != null || c.has_name_hash === true,
+      hasMobile:        c.mobile_number != null || c.has_mobile_hash === true,
       kyc: {
         levelId:             c.kyc_level_id,
         levelName:           c.level_name,
@@ -521,8 +523,14 @@ router.post('/convert', async (req: Request, res: Response): Promise<void> => {
 
 import {
   buildVaultTransferSafeTx, relaySafeTx, unifiedBalanceOf,
-  isRegisteredConsumer, isTrustedCounterparty, type SafeTx,
+  isRegisteredConsumer, isTrustedCounterparty, sessionTransferDigest, type SafeTx,
 } from './safeRelayService.js';
+import {
+  sessionFeatureReady, getActiveSession, buildSessionStartPrepare, completeSessionStart,
+  buildSessionRevokePrepare, completeSessionRevoke, relaySessionPayment, relaySessionSetupTx,
+  sessionAmountWithinCaps, defaultSessionCaps,
+} from './sessionService.js';
+import { getOnChainSession } from './safeRelayService.js';
 import { createClaim, escrowAddress } from './escrowService.js';
 import { cashIn } from './cashInService.js';
 import { fxService } from './fxService.js';
@@ -562,16 +570,23 @@ interface PendingTransfer {
   recipientPhone?: string;   // set only for escrow (WhatsApp) sends
   sale?: SaleContext;        // set only for merchant purchases (Buy flow)
 }
+interface PendingSessionTransfer {
+  senderWallet: string; toAddress: string; amount: bigint; currency: string;
+  sessionAddress: string; deadline: bigint; expiry: number;
+  sale?: SaleContext;
+}
 const pendingTransfers = new Map<string, PendingTransfer>();
+const pendingSessionTransfers = new Map<string, PendingSessionTransfer>();
 function sweepPending() {
   const now = Date.now();
   for (const [h, p] of pendingTransfers) if (p.expiry < now) pendingTransfers.delete(h);
+  for (const [h, p] of pendingSessionTransfers) if (p.expiry < now) pendingSessionTransfers.delete(h);
 }
 
 // Record a completed POS purchase in the merchant sales ledger. Best-effort: the
 // on-chain payment has already settled, so a bookkeeping failure here must never
 // fail the request — it's logged and swallowed.
-async function recordMerchantSale(pending: PendingTransfer, txHash: string): Promise<void> {
+async function recordMerchantSale(pending: { toAddress: string; senderWallet: string; amount: bigint; currency: string; sale?: SaleContext }, txHash: string): Promise<void> {
   const sale = pending.sale;
   if (!sale) return;
   try {
@@ -614,27 +629,9 @@ async function recordMerchantSale(pending: PendingTransfer, txHash: string): Pro
   }
 }
 
-/// Resolve a recipient — either a 0x address or an @tag (ENS subdomain registered
-/// on the Consumer contract). Returns the recipient's spend-wallet address.
+/// Resolve a recipient — 0x address, @tag, or on-chain account number.
 async function resolveRecipient(toRaw: string): Promise<string> {
-  const v = toRaw.trim();
-  if (/^0x[0-9a-fA-F]{40}$/.test(v)) return ethers.getAddress(v);
-
-  const tag = v.replace(/^@/, '').toLowerCase().split('.')[0];
-  if (!/^[a-z0-9-]{3,32}$/.test(tag)) throw new Error('Invalid recipient — use a 0x address or @tag');
-  if (!config.contracts.consumer) throw new Error('Consumer contract not configured');
-
-  const consumer = new ethers.Contract(
-    config.contracts.consumer,
-    ['function getConsumerByEns(bytes32 ensHash) view returns (tuple(address spendWallet,address saveWallet,address usdWallet,bytes32 displayNameHash,bytes32 ensSubdomainHash,bytes32 countryCode,uint8 kycLevel,bool isActive,uint256 globalConsumerId))'],
-    getProvider(),
-  );
-  try {
-    const d = await consumer.getConsumerByEns(ethers.keccak256(ethers.toUtf8Bytes(tag)));
-    return d.spendWallet as string;
-  } catch {
-    throw new Error(`No account found for @${tag}`);
-  }
+  return resolveWalletOrTag(toRaw);
 }
 
 // ── GET /api/consumer/checkout/quote ──────────────────────────────────────────
@@ -662,6 +659,164 @@ router.get('/checkout/quote', async (req: Request, res: Response): Promise<void>
     }
     console.error('[GET /api/consumer/checkout/quote]', err);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Session keys (SessionTransferModule) ────────────────────────────────────
+
+router.get('/session/status', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const enabled = await sessionFeatureReady();
+    if (!enabled) { res.json({ enabled: false, active: false }); return; }
+    const session = await getActiveSession(req.consumer!.walletAddress);
+    res.json({
+      enabled: true,
+      active: !!session,
+      sessionAddress: session?.sessionAddress ?? null,
+      expiresAt: session?.expiresAt?.toISOString() ?? null,
+    });
+  } catch (err) {
+    console.error('[GET /api/consumer/session/status]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/session/start/prepare', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { sessionAddress } = req.body as { sessionAddress?: string };
+    if (!sessionAddress) { res.status(400).json({ error: 'sessionAddress required' }); return; }
+    const wallet = req.consumer!.walletAddress;
+    const prepared = await buildSessionStartPrepare(wallet, sessionAddress);
+    sweepPending();
+    pendingTransfers.set(prepared.safeTxHash, {
+      safeTx: prepared.safeTx, senderWallet: wallet, toAddress: sessionAddress, amount: 0n, currency: 'ZAR',
+      expiry: Date.now() + PENDING_TTL_MS,
+    });
+    res.json({
+      step: prepared.step,
+      safeTxHash: prepared.safeTxHash,
+      challenge: Buffer.from(prepared.safeTxHash.slice(2), 'hex').toString('base64url'),
+      rpId: config.webauthn.rpId,
+      sessionAddress: prepared.sessionAddress,
+      ...(prepared.step === 'addSessionKey'
+        ? { expiry: prepared.expiry, maxPerTx: prepared.maxPerTx, dailyCap: prepared.dailyCap }
+        : {}),
+    });
+  } catch (err) {
+    console.error('[POST /api/consumer/session/start/prepare]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/session/start/submit', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const body = req.body as Record<string, string>;
+    const { safeTxHash, credentialId, authenticatorData, clientDataJSON, signature,
+            sessionAddress, expiry, maxPerTx, dailyCap, step } = body;
+    if (!safeTxHash || !credentialId || !sessionAddress) {
+      res.status(400).json({ error: 'Missing fields' }); return;
+    }
+    const pending = pendingTransfers.get(safeTxHash);
+    if (!pending || pending.expiry < Date.now()) {
+      res.status(410).json({ error: 'Session setup expired — try again', code: 'EXPIRED' }); return;
+    }
+    const cred = await db.query<{ signer_address: string | null }>(
+      `SELECT signer_address FROM webauthn_credentials WHERE credential_id = $1`, [credentialId],
+    );
+    const signer = cred.rows[0]?.signer_address;
+    if (!signer) { res.status(404).json({ error: 'Unknown passkey credential' }); return; }
+
+    const assertion = {
+      authenticatorData: b64urlToBuf(authenticatorData),
+      clientDataJSON: b64urlToBuf(clientDataJSON),
+      derSignature: b64urlToBuf(signature),
+    };
+
+    if (step === 'enableModule') {
+      const txHash = await relaySessionSetupTx({
+        walletAddress: req.consumer!.walletAddress,
+        ownerSignerAddress: signer,
+        safeTx: pending.safeTx,
+        assertion,
+      });
+      pendingTransfers.delete(safeTxHash);
+      res.json({ success: true, step: 'enableModule', txHash, sessionAddress });
+      return;
+    }
+
+    if (!expiry) { res.status(400).json({ error: 'expiry required for addSessionKey step' }); return; }
+
+    const caps = await defaultSessionCaps(req.consumer!.walletAddress);
+    const txHash = await completeSessionStart({
+      walletAddress: req.consumer!.walletAddress,
+      sessionAddress,
+      ownerSignerAddress: signer,
+      safeTx: pending.safeTx,
+      assertion,
+      expiry,
+      maxPerTx: maxPerTx ?? caps.maxPerTx.toString(),
+      dailyCap: dailyCap ?? caps.dailyCap.toString(),
+    });
+    pendingTransfers.delete(safeTxHash);
+    res.json({ success: true, step: 'addSessionKey', txHash, sessionAddress, expiresAt: new Date(Number(expiry) * 1000).toISOString() });
+  } catch (err) {
+    console.error('[POST /api/consumer/session/start/submit]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/session/revoke/prepare', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { sessionAddress } = req.body as { sessionAddress?: string };
+    if (!sessionAddress) { res.status(400).json({ error: 'sessionAddress required' }); return; }
+    const wallet = req.consumer!.walletAddress;
+    const { safeTx, safeTxHash } = await buildSessionRevokePrepare(wallet, sessionAddress);
+    sweepPending();
+    pendingTransfers.set(safeTxHash, {
+      safeTx, senderWallet: wallet, toAddress: sessionAddress, amount: 0n, currency: 'ZAR',
+      expiry: Date.now() + PENDING_TTL_MS,
+    });
+    res.json({
+      safeTxHash,
+      challenge: Buffer.from(safeTxHash.slice(2), 'hex').toString('base64url'),
+      rpId: config.webauthn.rpId,
+      sessionAddress,
+    });
+  } catch (err) {
+    console.error('[POST /api/consumer/session/revoke/prepare]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/session/revoke/submit', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const body = req.body as Record<string, string>;
+    const { safeTxHash, credentialId, authenticatorData, clientDataJSON, signature, sessionAddress } = body;
+    const pending = pendingTransfers.get(safeTxHash);
+    if (!pending || pending.expiry < Date.now()) {
+      res.status(410).json({ error: 'Revoke expired — try again', code: 'EXPIRED' }); return;
+    }
+    const cred = await db.query<{ signer_address: string | null }>(
+      `SELECT signer_address FROM webauthn_credentials WHERE credential_id = $1`, [credentialId],
+    );
+    const signer = cred.rows[0]?.signer_address;
+    if (!signer) { res.status(404).json({ error: 'Unknown passkey credential' }); return; }
+    const txHash = await completeSessionRevoke({
+      walletAddress: req.consumer!.walletAddress,
+      sessionAddress,
+      ownerSignerAddress: signer,
+      safeTx: pending.safeTx,
+      assertion: {
+        authenticatorData: b64urlToBuf(authenticatorData),
+        clientDataJSON: b64urlToBuf(clientDataJSON),
+        derSignature: b64urlToBuf(signature),
+      },
+    });
+    pendingTransfers.delete(safeTxHash);
+    res.json({ success: true, txHash });
+  } catch (err) {
+    console.error('[POST /api/consumer/session/revoke/submit]', err);
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 
@@ -724,17 +879,73 @@ router.post('/transfer/prepare', async (req: Request, res: Response): Promise<vo
       res.status(409).json({ error: 'Insufficient balance', code: 'INSUFFICIENT_BALANCE' }); return;
     }
 
+    sweepPending();
+
+    const activeSession = await sessionFeatureReady()
+      ? await getActiveSession(senderWallet)
+      : null;
+
+    if (activeSession) {
+      const capCheck = sessionAmountWithinCaps(amountUnits, payCurrency, activeSession);
+      if (!capCheck.ok) {
+        res.status(409).json({
+          error: capCheck.reason === 'per_tx'
+            ? 'Amount exceeds session per-transaction limit — a new session will be started'
+            : 'Amount exceeds session daily limit',
+          code: 'SESSION_CAP_EXCEEDED',
+        });
+        return;
+      }
+
+      const onChain = await getOnChainSession(senderWallet, activeSession.sessionAddress);
+      if (amountUnits > onChain.maxPerTx) {
+        res.status(409).json({
+          error: 'Session limits are outdated — please try again to register a new session',
+          code: 'SESSION_CAP_EXCEEDED',
+        });
+        return;
+      }
+
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      const digest = await sessionTransferDigest({
+        safeAddress: senderWallet,
+        sessionKeyAddress: activeSession.sessionAddress,
+        toAddress,
+        amount: amountUnits,
+        currency: payCurrency,
+        deadline,
+      });
+      const transferId = ethers.hexlify(ethers.randomBytes(16));
+      pendingSessionTransfers.set(transferId, {
+        senderWallet, toAddress, amount: amountUnits, currency: payCurrency,
+        sessionAddress: activeSession.sessionAddress, deadline, expiry: Date.now() + PENDING_TTL_MS,
+        sale: saleCtx,
+      });
+      res.json({
+        mode: 'session',
+        transferId,
+        digest,
+        deadline: deadline.toString(),
+        sessionAddress: activeSession.sessionAddress,
+        to: toAddress, amount: payAmountStr, currency: payCurrency,
+        charge: saleCtx?.chargeCurrency && saleCtx.chargeCurrency !== payCurrency
+          ? { amount: saleCtx.chargeAmount, currency: saleCtx.chargeCurrency, fxRate: saleCtx.fxRate }
+          : undefined,
+      });
+      return;
+    }
+
     const { safeTx, safeTxHash } = await buildVaultTransferSafeTx({
       safeAddress: senderWallet, toAddress, amount: amountUnits, currency: payCurrency,
     });
 
-    sweepPending();
     pendingTransfers.set(safeTxHash, {
       safeTx, senderWallet, toAddress, amount: amountUnits, currency: payCurrency, expiry: Date.now() + PENDING_TTL_MS,
       sale: saleCtx,
     });
 
     res.json({
+      mode: 'passkey',
       safeTxHash,
       challenge: Buffer.from(safeTxHash.slice(2), 'hex').toString('base64url'),
       rpId: config.webauthn.rpId,
@@ -755,8 +966,38 @@ router.post('/transfer/prepare', async (req: Request, res: Response): Promise<vo
 //   (the last three base64url, exactly as returned by the passkey get() assertion)
 router.post('/transfer/submit', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { safeTxHash, credentialId, authenticatorData, clientDataJSON, signature } =
-      req.body as Record<string, string>;
+    const body = req.body as Record<string, string>;
+    const { transferId, sessionSignature } = body;
+
+    if (transferId && sessionSignature) {
+      const pending = pendingSessionTransfers.get(transferId);
+      if (!pending || pending.expiry < Date.now()) {
+        res.status(410).json({ error: 'Transfer expired — please start again', code: 'EXPIRED' }); return;
+      }
+      if (pending.senderWallet.toLowerCase() !== req.consumer!.walletAddress.toLowerCase()) {
+        res.status(403).json({ error: 'Transfer does not belong to this account' }); return;
+      }
+
+      const txHash = await relaySessionPayment({
+        walletAddress: pending.senderWallet,
+        sessionAddress: pending.sessionAddress,
+        toAddress: pending.toAddress,
+        amount: pending.amount,
+        currency: pending.currency,
+        deadline: pending.deadline,
+        signature: sessionSignature,
+      });
+
+      pendingSessionTransfers.delete(transferId);
+      await recordMerchantSale(pending, txHash);
+      res.json({
+        success: true, txHash, to: pending.toAddress,
+        amount: pending.amount.toString(), currency: pending.currency,
+      });
+      return;
+    }
+
+    const { safeTxHash, credentialId, authenticatorData, clientDataJSON, signature } = body;
     if (!safeTxHash || !credentialId || !authenticatorData || !clientDataJSON || !signature) {
       res.status(400).json({ error: 'Missing signature fields' }); return;
     }

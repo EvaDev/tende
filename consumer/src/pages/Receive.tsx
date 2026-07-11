@@ -28,6 +28,7 @@ export default function Receive() {
   const [params] = useSearchParams();
   const [tab, setTab] = useState<Tab>('scan');
   const [tag, setTag] = useState<string | null>(null);
+  const [accountNumber, setAccountNumber] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [pending, setPending] = useState<{ secret: string; summary: ChangeSummary } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,7 +36,12 @@ export default function Receive() {
   const [done, setDone] = useState<{ amount: string; currency: string } | null>(null);
 
   useEffect(() => {
-    api.get<{ ensSubdomain?: string }>('/consumer/me').then(p => setTag(p.ensSubdomain ?? null)).catch(() => {});
+    api.get<{ ensSubdomain?: string; globalConsumerId?: number | null }>('/consumer/me')
+      .then(p => {
+        setTag(p.ensSubdomain ?? null);
+        setAccountNumber(p.globalConsumerId != null ? String(p.globalConsumerId) : null);
+      })
+      .catch(() => {});
     const c = params.get('c');
     if (c) loadSummary(c);
   }, [params]);
@@ -90,7 +96,7 @@ export default function Receive() {
     <>
       <div className="flex flex-col min-h-dvh pb-24 px-6 pt-12">
         <h2 className="text-2xl font-bold text-white mb-1">Receive</h2>
-        <p className="text-sm text-white/80 mb-4">Scan store change voucher or share your payment tag.</p>
+        <p className="text-sm text-white/80 mb-4">Scan store change voucher or share your @tag or account number.</p>
 
         <div className="flex gap-2 mb-4">
           {(['scan', 'tag'] as const).map(t => (
@@ -101,7 +107,7 @@ export default function Receive() {
                 tab === t ? 'bg-brand-accent text-white' : 'bg-brand-card text-brand-accent border border-brand-accent/20'
               }`}
             >
-              {t === 'scan' ? 'Change voucher' : 'My @tag'}
+              {t === 'scan' ? 'Change voucher' : 'How to pay me'}
             </button>
           ))}
         </div>
@@ -173,20 +179,35 @@ export default function Receive() {
         )}
 
         {tab === 'tag' && (
-          <div className="bg-brand-card rounded-2xl p-6 text-center space-y-3">
+          <div className="bg-brand-card rounded-2xl p-6 text-center space-y-4">
             <p className="text-brand-accent/60 text-sm">Someone paying you can send to</p>
             {tag
               ? <div className="flex justify-center"><QRCodeSVG value={`@${tag}`} size={176} fgColor="#3D1919" bgColor="#FFFFFF" level="M" /></div>
               : <p className="text-brand-accent/50 text-sm">No payment tag yet</p>}
-            <p className="text-xl font-bold text-brand-accent">{tag ? `@${tag}` : '—'}</p>
-            {tag && (
-              <button
-                onClick={() => navigator.clipboard?.writeText(`@${tag}`)}
-                className="w-full py-3 rounded-xl bg-brand-accent text-brand-text font-medium"
-              >
-                Copy tag
-              </button>
-            )}
+            <div className="space-y-1">
+              <p className="text-xl font-bold text-brand-accent">{tag ? `@${tag}` : '—'}</p>
+              {accountNumber && (
+                <p className="text-sm text-brand-accent/70">Account number <span className="font-mono font-semibold text-brand-accent">{accountNumber}</span></p>
+              )}
+            </div>
+            <div className="flex flex-col gap-2">
+              {tag && (
+                <button
+                  onClick={() => navigator.clipboard?.writeText(`@${tag}`)}
+                  className="w-full py-3 rounded-xl bg-brand-accent text-brand-text font-medium"
+                >
+                  Copy @tag
+                </button>
+              )}
+              {accountNumber && (
+                <button
+                  onClick={() => navigator.clipboard?.writeText(accountNumber)}
+                  className="w-full py-3 rounded-xl border border-brand-accent/30 text-brand-accent font-medium"
+                >
+                  Copy account number
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>

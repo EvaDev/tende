@@ -139,7 +139,7 @@ export async function whitelistInPaymaster({ walletAddress }: { walletAddress: s
 
 // ── Step 7: DB write ──────────────────────────────────────────────────────────
 
-export async function writeConsumerRecord({ walletAddress, countryCode, idosCredentialId, ensSubdomain, displayName, mobileNumber }: {
+export async function writeConsumerRecord({ walletAddress, globalConsumerId, countryCode, idosCredentialId, ensSubdomain, displayName, mobileNumber }: {
   walletAddress: string;
   globalConsumerId: number;
   countryCode: string;
@@ -154,24 +154,25 @@ export async function writeConsumerRecord({ walletAddress, countryCode, idosCred
   // Params must be sequential and all referenced or pg can't infer their types
   // ("could not determine data type of parameter $N"). We persist wallet, country
   // (also drives the KYC-level lookup), the idOS credential id (NULL when the
-  // best-effort idOS step didn't complete), and the ENS subdomain (the @tag shown
-  // in the app — previously never stored, so Account showed "@—").
+  // best-effort idOS step didn't complete), the ENS subdomain (the @tag shown
+  // in the app), and global_consumer_id (Consumer.sol account number).
   const row = await db.query<{ consumer_id: string }>(
     `INSERT INTO consumers
        (wallet_address, kyc_level_id, country_code, idos_credential_id, ens_subdomain,
-        display_name, mobile_number, source_system, is_active)
+        display_name, mobile_number, global_consumer_id, source_system, is_active)
      VALUES ($1,
        (SELECT level_id FROM kyc_levels WHERE country_code=$2 AND level_name LIKE 'Level 0%' LIMIT 1),
-       $2, $3, $4, $5, $6, 'ONCHAIN', true)
+       $2, $3, $4, $5, $6, $7, 'ONCHAIN', true)
      ON CONFLICT (wallet_address) DO UPDATE SET
-       idos_credential_id = EXCLUDED.idos_credential_id,
-       ens_subdomain      = EXCLUDED.ens_subdomain,
-       display_name       = EXCLUDED.display_name,
-       mobile_number      = EXCLUDED.mobile_number,
-       updated_at         = NOW()
+       idos_credential_id  = EXCLUDED.idos_credential_id,
+       ens_subdomain       = EXCLUDED.ens_subdomain,
+       display_name        = EXCLUDED.display_name,
+       mobile_number       = EXCLUDED.mobile_number,
+       global_consumer_id  = COALESCE(EXCLUDED.global_consumer_id, consumers.global_consumer_id),
+       updated_at          = NOW()
      RETURNING consumer_id`,
     [walletAddress, countryCode, idosCredentialId || null, ensSubdomain || null,
-     displayName || null, mobileNumber || null],
+     displayName || null, mobileNumber || null, globalConsumerId],
   );
   return row.rows[0];
 }

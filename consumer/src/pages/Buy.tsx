@@ -3,10 +3,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { ShoppingBag, QrCode, AlertCircle, CheckCircle2, X, Store, ChevronRight } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import { QrScanner } from '@/components/QrScanner';
-import { prepareTransfer, signAndSubmitTransfer, type TransferResult } from '@/lib/pay';
+import { executeTransfer, type TransferResult, type TransferStep } from '@/lib/pay';
 import { isPasskeySupported } from '@/lib/passkey';
 import { api } from '@/lib/api';
 import { getAppName } from '@/lib/brand';
+import PaymentProgress, { PAYMENT_STEPS } from '@/components/PaymentProgress';
 
 type PayLeg = 'SPEND' | 'ZAR' | 'USDC';
 
@@ -70,6 +71,7 @@ export default function Buy() {
   const [amountInput, setAmountInput] = useState('');
   const [error, setError]         = useState('');
   const [loading, setLoading]     = useState(false);
+  const [payStep, setPayStep]     = useState<TransferStep | null>(null);
   const [result, setResult]       = useState<TransferResult | null>(null);
   const [quote, setQuote]         = useState<CheckoutQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -176,9 +178,9 @@ export default function Buy() {
       return;
     }
 
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setPayStep('prepare');
     try {
-      const prepared = await prepareTransfer({
+      setResult(await executeTransfer({
         to: charge.to, amount: payAmount, currency: payCurrency,
         sale: {
           merchantId: charge.merchantId, productId: charge.productId,
@@ -187,8 +189,7 @@ export default function Buy() {
           chargeAmount: charge.amount,
           chargeCurrency: charge.currency,
         },
-      });
-      setResult(await signAndSubmitTransfer(prepared));
+      }, setPayStep));
     } catch (e) {
       const msg = (e as Error).message ?? '';
       if (msg.includes('INSUFFICIENT_BALANCE') || msg.includes('Insufficient')) setError('You don’t have enough balance for this purchase.');
@@ -199,6 +200,7 @@ export default function Buy() {
       else setError(msg || 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
+      setPayStep(null);
     }
   }
 
@@ -226,6 +228,16 @@ export default function Buy() {
             </a>
           </div>
           <button onClick={() => navigate('/home')} className="w-full py-3.5 rounded-2xl bg-brand-accent text-brand-text font-semibold active:scale-95 transition-transform">Done</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading && payStep) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center px-6 bg-brand-bg">
+        <div className="w-full max-w-sm bg-brand-card rounded-2xl p-5 shadow-xl">
+          <PaymentProgress steps={PAYMENT_STEPS} currentId={payStep} title="Processing payment" />
         </div>
       </div>
     );

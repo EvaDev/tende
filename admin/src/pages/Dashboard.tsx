@@ -32,16 +32,50 @@ interface TreasurySummary {
 interface ProtocolFinancials {
   revenueDisplay: string;
   conversionFeesDisplay: string;
+  conversionCount: number;
   yieldRevenueDisplay: string;
+  yieldHarvestDue: boolean;
   settlementFeesDisplay: string;
+  settlementCount: number;
   expensesDisplay: string;
   cacExpensesDisplay: string;
+  cacCount: number;
   cacPerConsumerDisplay: string;
   transactionGasDisplay: string;
+  transactionCount: number;
   operationsGasDisplay: string;
+  operationsCount: number;
   deploymentGasDisplay: string;
+  deploymentCount: number;
   netDisplay: string;
+  tradingSinceDisplay: string;
   usdPerZar: number | null;
+}
+
+const DETAIL_TEXT = 'text-lg text-white/70';
+const DETAIL_COUNT = 'text-lg text-white/70';
+
+function DetailFooter({ rows, lines }: { rows?: { label: string; count?: string; value: string }[]; lines?: string[] }) {
+  if (!rows?.length && !lines?.length) return null;
+  return (
+    <div className="flex flex-col gap-0.5 mt-4 pt-3 border-t border-white/10">
+      {rows?.map(row => {
+        const harvestDue = row.count === 'Harvest due';
+        return (
+          <div key={row.label} className={`grid grid-cols-[1fr_auto_auto] gap-x-4 ${DETAIL_TEXT} tabular-nums items-baseline`}>
+            <span>{row.label}</span>
+            <span className={`text-right min-w-[5rem] ${harvestDue ? 'text-amber-200 font-semibold' : DETAIL_COUNT}`}>
+              {row.count ?? ''}
+            </span>
+            <span className="text-right min-w-[5.5rem]">{row.value}</span>
+          </div>
+        );
+      })}
+      {lines?.map(line => (
+        <span key={line} className={`${DETAIL_TEXT} tabular-nums`}>{line}</span>
+      ))}
+    </div>
+  );
 }
 
 function FinMetricTile({
@@ -55,7 +89,7 @@ function FinMetricTile({
   label: string;
   total: string;
   path: string;
-  footerRows?: { label: string; value: string }[];
+  footerRows?: { label: string; count?: string; value: string }[];
   singleLineHeader?: boolean;
   onNavigate: (path: string) => void;
 }) {
@@ -66,6 +100,7 @@ function FinMetricTile({
           <span className="text-lg text-white/70">{label}</span>
           <span className="text-5xl font-bold tabular-nums leading-none">{total}</span>
         </div>
+        <DetailFooter rows={footerRows} />
       </div>
     );
   }
@@ -145,7 +180,7 @@ function MetricTile({
   rightAmount?: string;
   rightLabel?: string;
   footerLines?: string[];
-  footerRows?: { label: string; value: string }[];
+  footerRows?: { label: string; count?: string; value: string }[];
   alignLabelWithCount?: boolean;
   onNavigate: (path: string) => void;
 }) {
@@ -171,17 +206,7 @@ function MetricTile({
         )}
       </div>
       {(footerRows?.length || footerLines?.length) ? (
-        <div className="flex flex-col gap-0.5 mt-4 pt-3 border-t border-white/10">
-          {footerRows?.map(row => (
-            <div key={row.label} className="flex justify-between gap-4 text-sm text-white/50 tabular-nums">
-              <span>{row.label}</span>
-              <span>{row.value}</span>
-            </div>
-          ))}
-          {footerLines?.map(line => (
-            <span key={line} className="text-sm text-white/50 tabular-nums">{line}</span>
-          ))}
-        </div>
+        <DetailFooter rows={footerRows} lines={footerLines} />
       ) : null}
     </div>
   );
@@ -250,9 +275,9 @@ export default function Dashboard() {
             total={fin.revenueDisplay}
             path="/reports/revenue"
             footerRows={[
-              { label: 'Conversions', value: fin.conversionFeesDisplay },
-              { label: 'Yield', value: fin.yieldRevenueDisplay },
-              { label: 'Settlement', value: fin.settlementFeesDisplay },
+              { label: 'Conversions', count: String(fin.conversionCount), value: fin.conversionFeesDisplay },
+              { label: 'Yield', count: fin.yieldHarvestDue ? 'Harvest due' : '—', value: fin.yieldRevenueDisplay },
+              { label: 'Settlement', count: String(fin.settlementCount), value: fin.settlementFeesDisplay },
             ]}
             onNavigate={navigate}
           />
@@ -261,10 +286,10 @@ export default function Dashboard() {
             total={fin.expensesDisplay}
             path="/reports/revenue"
             footerRows={[
-              { label: 'CAC', value: fin.cacExpensesDisplay },
-              { label: 'Transactions', value: fin.transactionGasDisplay },
-              { label: 'Platform', value: fin.operationsGasDisplay },
-              { label: 'Deployments', value: fin.deploymentGasDisplay },
+              { label: 'CAC', count: String(fin.cacCount), value: fin.cacExpensesDisplay },
+              { label: 'Transactions', count: String(fin.transactionCount), value: fin.transactionGasDisplay },
+              { label: 'Platform', count: String(fin.operationsCount), value: fin.operationsGasDisplay },
+              { label: 'Deployments', count: String(fin.deploymentCount), value: fin.deploymentGasDisplay },
             ]}
             onNavigate={navigate}
           />
@@ -273,6 +298,7 @@ export default function Dashboard() {
             total={fin.netDisplay}
             path="/reports/revenue"
             singleLineHeader
+            footerRows={fin.tradingSinceDisplay ? [{ label: fin.tradingSinceDisplay, value: '' }] : undefined}
             onNavigate={navigate}
           />
         </div>
@@ -285,7 +311,7 @@ export default function Dashboard() {
           label="Merchants"
           path="/merchants"
           rightAmount={claims ? formatHeld(claims.merchants.tvl) : undefined}
-          rightLabel="TVL"
+          rightLabel="Total held"
           onNavigate={navigate}
         />
         <MetricTile
@@ -297,11 +323,9 @@ export default function Dashboard() {
           footerRows={claims ? [
             { label: 'TT (ZAR)', value: fmtZarInt(consumerZarTvl) },
             { label: 'Assets (USDC)', value: fmtUsdInt(consumerUsdc) },
+            { label: `${counts.pendingKyc} pending KYC`, value: '' },
+            ...(fin?.cacPerConsumerDisplay ? [{ label: 'CAC per consumer', value: fin.cacPerConsumerDisplay }] : []),
           ] : undefined}
-          footerLines={[
-            `${counts.pendingKyc} pending KYC`,
-            ...(fin?.cacPerConsumerDisplay ? [fin.cacPerConsumerDisplay] : []),
-          ]}
           onNavigate={navigate}
         />
         <MetricTile
@@ -309,7 +333,7 @@ export default function Dashboard() {
           label="Currencies"
           path="/currencies"
           rightAmount={claims ? fmtUsdInt(totalUsdcHeld) : undefined}
-          rightLabel="Total value held"
+          rightLabel="Total held"
           footerRows={claims ? [
             { label: 'Consumers', value: fmtUsdInt(consumerUsdc) },
             { label: 'Merchants', value: fmtUsdInt(merchantUsdc) },

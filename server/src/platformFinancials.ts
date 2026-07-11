@@ -4,6 +4,8 @@ import db from './db.js';
 import { getGasFeeTotals, getSuccessfulOnboardingGasEth } from './gasCostService.js';
 import dexQuoteService from './dexQuoteService.js';
 import fxService from './fxService.js';
+import { getHarvestableYield } from './treasuryService.js';
+import config from './config.js';
 import { ethers } from 'ethers';
 
 const WETH_MAINNET = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
@@ -47,24 +49,32 @@ export interface ProtocolFinancials {
   revenueDisplay: string;
   conversionFeesZar: number;
   conversionFeesDisplay: string;
+  conversionCount: number;
   yieldRevenueZar: number;
   yieldRevenueDisplay: string;
+  yieldHarvestDue: boolean;
   settlementFeesZar: number;
   settlementFeesDisplay: string;
+  settlementCount: number;
   expensesZar: number;
   expensesDisplay: string;
   cacExpensesZar: number;
   cacExpensesDisplay: string;
+  cacCount: number;
   cacPerConsumerDisplay: string;
   transactionGasZar: number;
   transactionGasDisplay: string;
+  transactionCount: number;
   operationsGasZar: number;
   operationsGasDisplay: string;
+  operationsCount: number;
   deploymentGasZar: number;
   deploymentGasDisplay: string;
+  deploymentCount: number;
   expensesEth: number;
   netZar: number;
   netDisplay: string;
+  tradingSinceDisplay: string;
   yieldRevenueMinor: number;
   gasTransactionCount: number;
   ethUsd: number | null;
@@ -73,6 +83,22 @@ export interface ProtocolFinancials {
 
 function formatZarApprox(zar: number): string {
   return `R${zar.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatTradingSince(d: Date): string {
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+async function getFirstTradingDate(): Promise<Date | null> {
+  const chain = await db.query<{ t: Date | null }>(
+    `SELECT MIN(block_time) AS t FROM chain_events WHERE block_time IS NOT NULL`,
+  ).catch(() => ({ rows: [{ t: null }] }));
+  if (chain.rows[0]?.t) return chain.rows[0].t;
+
+  const gas = await db.query<{ t: Date | null }>(
+    `SELECT MIN(recorded_at) AS t FROM protocol_gas_costs`,
+  ).catch(() => ({ rows: [{ t: null }] }));
+  return gas.rows[0]?.t ?? null;
 }
 
 async function ethToZar(eth: number): Promise<{ zar: number; ethUsd: number | null; usdPerZar: number | null }> {
@@ -115,26 +141,48 @@ async function sumConversionFeesZar(): Promise<number> {
   return total;
 }
 
+async function anyHarvestDue(): Promise<boolean> {
+  // Pilot dashboard: check ZAR plus any configured cash corridor currencies.
+  const codes = Array.from(new Set(['ZAR', ...config.platform.cashCurrencies]));
+  for (const code of codes) {
+    try {
+      const raw = await getHarvestableYield(code);
+      if (BigInt(raw) > 0n) return true;
+    } catch {
+      // Vault / RPC unavailable — don't block financials.
+    }
+  }
+  return false;
+}
+
 export async function getProtocolFinancials(completedConsumers = 0): Promise<ProtocolFinancials> {
-  const [convFeesZar, yieldRev, gas] = await Promise.all([
+  const [convFeesZar, yieldRev, gas, conversionCountRow, settlementRow, harvestDue] = await Promise.all([
     sumConversionFeesZar(),
     db.query<{ total: string }>(
       `SELECT COALESCE(SUM((args->>'platformCut')::numeric), 0)::text AS total
          FROM chain_events WHERE event_name = 'YieldHarvested'`,
     ).catch(() => ({ rows: [{ total: '0' }] })),
     getGasFeeTotals(),
+    db.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM consumer_conversions`,
+    ).catch(() => ({ rows: [{ n: '0' }] })),
+    db.query<{ total: string; n: string }>(
+      `SELECT COALESCE(SUM(fee_amount), 0)::text AS total, COUNT(*)::text AS n
+         FROM settlement_requests WHERE status = 'executed'`,
+    ).catch(() => ({ rows: [{ total: '0', n: '0' }] })),
+    anyHarvestDue(),
   ]);
 
   const conversionFeesZar = convFeesZar;
-  const settlementFees = await db.query<{ total: string }>(
-    `SELECT COALESCE(SUM(fee_amount), 0)::text AS total FROM settlement_requests WHERE status = 'executed'`,
-  ).catch(() => ({ rows: [{ total: '0' }] }));
-  const settlementFeesZar = Number(settlementFees.rows[0]?.total ?? 0);
+  const conversionCount = Number(conversionCountRow.rows[0]?.n ?? 0);
+  const settlementFeesZar = Number(settlementRow.rows[0]?.total ?? 0);
+  const settlementCount = Number(settlementRow.rows[0]?.n ?? 0);
   const yieldRevZar = await yieldRevenueZar();
   const yieldRevenueMinor = Number(yieldRev.rows[0]?.total ?? 0);
   const revenueZar = conversionFeesZar + settlementFeesZar + yieldRevZar;
 
   const onboardingEth = await getSuccessfulOnboardingGasEth();
+  const catCount = (c: string) => gas.byCategory.find(x => x.category === c)?.count ?? 0;
   const transactionEth = gas.byCategory.find(c => c.category === 'transaction')?.totalEth ?? 0;
   const operationsEth = gas.byCategory.find(c => c.category === 'operations')?.totalEth ?? 0;
   const deploymentEth = gas.byCategory.find(c => c.category === 'deployment')?.totalEth ?? 0;
@@ -146,32 +194,39 @@ export async function getProtocolFinancials(completedConsumers = 0): Promise<Pro
   const { zar: deploymentGasZar } = await ethToZar(deploymentEth);
   const netZar = revenueZar - expensesZar;
   const cacPerConsumer = completedConsumers > 0 ? cacExpensesZar / completedConsumers : 0;
+  const tradingSince = await getFirstTradingDate();
 
   return {
     revenueZar,
     revenueDisplay: formatZarApprox(revenueZar),
     conversionFeesZar,
     conversionFeesDisplay: formatZarApprox(conversionFeesZar),
+    conversionCount,
     yieldRevenueZar: yieldRevZar,
     yieldRevenueDisplay: formatZarApprox(yieldRevZar),
+    yieldHarvestDue: harvestDue,
     settlementFeesZar,
     settlementFeesDisplay: formatZarApprox(settlementFeesZar),
+    settlementCount,
     expensesZar,
     expensesDisplay: formatZarApprox(expensesZar),
     cacExpensesZar,
     cacExpensesDisplay: formatZarApprox(cacExpensesZar),
-    cacPerConsumerDisplay: completedConsumers > 0
-      ? `${formatZarApprox(cacPerConsumer)} CAC per consumer`
-      : '',
+    cacCount: completedConsumers,
+    cacPerConsumerDisplay: completedConsumers > 0 ? formatZarApprox(cacPerConsumer) : '',
     transactionGasZar,
     transactionGasDisplay: formatZarApprox(transactionGasZar),
+    transactionCount: catCount('transaction'),
     operationsGasZar,
     operationsGasDisplay: formatZarApprox(operationsGasZar),
+    operationsCount: catCount('operations'),
     deploymentGasZar,
     deploymentGasDisplay: formatZarApprox(deploymentGasZar),
+    deploymentCount: catCount('deployment'),
     expensesEth: gas.totalEth,
     netZar,
     netDisplay: formatZarApprox(netZar),
+    tradingSinceDisplay: tradingSince ? `Since ${formatTradingSince(tradingSince)}` : '',
     yieldRevenueMinor,
     gasTransactionCount: gas.transactionCount,
     ethUsd,

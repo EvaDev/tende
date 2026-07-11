@@ -9,6 +9,7 @@ interface Consumer {
   id: string;
   wallet_address: string;
   safe_address?: string;
+  global_consumer_id?: number | string | null;
   kyc_level: number | string;
   kyc_level_name?: string;
   ens_subdomain?: string;
@@ -19,6 +20,10 @@ interface Consumer {
 }
 
 const cols: Col<Consumer>[] = [
+  { key: 'acct', header: 'Account #',
+    sort: c => Number(c.global_consumer_id ?? 0),
+    search: c => String(c.global_consumer_id ?? ''),
+    render: c => <span className="font-mono text-xs">{c.global_consumer_id != null ? String(c.global_consumer_id) : '—'}</span> },
   { key: 'tag', header: 'Tag',
     sort: c => c.ens_subdomain ?? '', search: c => c.ens_subdomain ?? '',
     render: c => <span className="font-medium">{c.ens_subdomain ? `@${c.ens_subdomain}` : '—'}</span> },

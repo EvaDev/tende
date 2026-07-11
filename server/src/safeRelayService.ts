@@ -194,3 +194,173 @@ export async function isTrustedCounterparty(wallet: string): Promise<boolean> {
   );
   try { return await v.trustedCounterparty(wallet) as boolean; } catch { return false; }
 }
+
+// ── SessionTransferModule (cheaper per-tx auth) ───────────────────────────────
+
+const SESSION_MODULE_ABI = [
+  'function addSessionKey(address sessionKey, uint64 expiry, uint256 maxPerTx, uint256 dailyCap)',
+  'function removeSessionKey(address sessionKey)',
+  'function executeTransfer(address safe, address sessionKey, address to, uint256 amount, bytes32 currencyCode, uint256 deadline, bytes signature) returns (bool)',
+  'function sessionTransferHash(address safe, address sessionKey, address to, uint256 amount, bytes32 currencyCode, uint256 deadline) view returns (bytes32)',
+  'function getSession(address safe, address sessionKey) view returns (tuple(uint64 expiry, uint256 maxPerTx, uint256 dailyCap, uint256 dailySpent, uint256 dayBucket, uint256 nonce, bool active))',
+  'function domainSeparator() view returns (bytes32)',
+];
+
+export function sessionTransferModuleConfigured(): boolean {
+  return !!config.contracts.sessionTransferModule;
+}
+
+const SAFE_MODULE_MANAGER_ABI = [
+  'function isModuleEnabled(address module) view returns (bool)',
+  'function enableModule(address module)',
+];
+
+export async function isSessionModuleEnabledOnSafe(safeAddress: string): Promise<boolean> {
+  if (!config.contracts.sessionTransferModule) return false;
+  const safe = new ethers.Contract(safeAddress, SAFE_MODULE_MANAGER_ABI, provider());
+  try {
+    return await safe.isModuleEnabled(config.contracts.sessionTransferModule) as boolean;
+  } catch {
+    return false;
+  }
+}
+
+export async function buildEnableSessionModuleSafeTx(params: {
+  safeAddress: string;
+}): Promise<{ safeTx: SafeTx; safeTxHash: string }> {
+  if (!config.contracts.sessionTransferModule) throw new Error('No session transfer module configured');
+  const iface = new ethers.Interface(SAFE_MODULE_MANAGER_ABI);
+  const data = iface.encodeFunctionData('enableModule', [config.contracts.sessionTransferModule]);
+  return buildModuleSafeTx({ safeAddress: params.safeAddress, moduleCalldata: data, to: params.safeAddress });
+}
+
+async function buildModuleSafeTx(params: {
+  safeAddress: string;
+  moduleCalldata: string;
+  to?: string;
+}): Promise<{ safeTx: SafeTx; safeTxHash: string }> {
+  const p = provider();
+  const safe = new ethers.Contract(params.safeAddress, SAFE_ABI, p);
+  const nonce: bigint = await safe.nonce();
+
+  const safeTx: SafeTx = {
+    to: params.to ?? config.contracts.sessionTransferModule!,
+    value: '0',
+    data: params.moduleCalldata,
+    operation: 0,
+    safeTxGas: '0',
+    baseGas: '0',
+    gasPrice: '0',
+    gasToken: ethers.ZeroAddress,
+    refundReceiver: ethers.ZeroAddress,
+    nonce: nonce.toString(),
+  };
+
+  const offChainHash = ethers.TypedDataEncoder.hash(
+    { chainId: config.chain.chainId, verifyingContract: params.safeAddress },
+    EIP712_SAFE_TX_TYPE,
+    safeTx,
+  );
+  const onChainHash: string = await safe.getTransactionHash(
+    safeTx.to, safeTx.value, safeTx.data, safeTx.operation, safeTx.safeTxGas,
+    safeTx.baseGas, safeTx.gasPrice, safeTx.gasToken, safeTx.refundReceiver, safeTx.nonce,
+  );
+  if (offChainHash.toLowerCase() !== onChainHash.toLowerCase()) {
+    throw new Error(`SafeTx hash mismatch (off-chain ${offChainHash} vs on-chain ${onChainHash})`);
+  }
+  return { safeTx, safeTxHash: onChainHash };
+}
+
+export async function buildAddSessionKeySafeTx(params: {
+  safeAddress: string;
+  sessionKeyAddress: string;
+  expiry: bigint;
+  maxPerTx: bigint;
+  dailyCap: bigint;
+}): Promise<{ safeTx: SafeTx; safeTxHash: string }> {
+  const iface = new ethers.Interface(SESSION_MODULE_ABI);
+  const data = iface.encodeFunctionData('addSessionKey', [
+    params.sessionKeyAddress, params.expiry, params.maxPerTx, params.dailyCap,
+  ]);
+  return buildModuleSafeTx({ safeAddress: params.safeAddress, moduleCalldata: data });
+}
+
+export async function buildRemoveSessionKeySafeTx(params: {
+  safeAddress: string;
+  sessionKeyAddress: string;
+}): Promise<{ safeTx: SafeTx; safeTxHash: string }> {
+  const iface = new ethers.Interface(SESSION_MODULE_ABI);
+  const data = iface.encodeFunctionData('removeSessionKey', [params.sessionKeyAddress]);
+  return buildModuleSafeTx({ safeAddress: params.safeAddress, moduleCalldata: data });
+}
+
+export async function getSessionNonce(safeAddress: string, sessionKeyAddress: string): Promise<bigint> {
+  if (!config.contracts.sessionTransferModule) throw new Error('No session transfer module configured');
+  const mod = new ethers.Contract(config.contracts.sessionTransferModule, SESSION_MODULE_ABI, provider());
+  const sess = await mod.getSession(safeAddress, sessionKeyAddress) as { nonce: bigint };
+  return sess.nonce;
+}
+
+export interface OnChainSession {
+  expiry: bigint;
+  maxPerTx: bigint;
+  dailyCap: bigint;
+  dailySpent: bigint;
+  dayBucket: bigint;
+  nonce: bigint;
+  active: boolean;
+}
+
+export async function getOnChainSession(safeAddress: string, sessionKeyAddress: string): Promise<OnChainSession> {
+  if (!config.contracts.sessionTransferModule) throw new Error('No session transfer module configured');
+  const mod = new ethers.Contract(config.contracts.sessionTransferModule, SESSION_MODULE_ABI, provider());
+  const sess = await mod.getSession(safeAddress, sessionKeyAddress) as OnChainSession;
+  return sess;
+}
+
+export async function sessionTransferDigest(params: {
+  safeAddress: string;
+  sessionKeyAddress: string;
+  toAddress: string;
+  amount: bigint;
+  currency: string;
+  deadline: bigint;
+}): Promise<string> {
+  if (!config.contracts.sessionTransferModule) throw new Error('No session transfer module configured');
+  const mod = new ethers.Contract(config.contracts.sessionTransferModule, SESSION_MODULE_ABI, provider());
+  const hash: string = await mod.sessionTransferHash(
+    params.safeAddress,
+    params.sessionKeyAddress,
+    params.toAddress,
+    params.amount,
+    currencyHash(params.currency),
+    params.deadline,
+  );
+  return hash;
+}
+
+export async function relaySessionTransfer(params: {
+  walletAddress: string;
+  sessionAddress: string;
+  toAddress: string;
+  amount: bigint;
+  currency: string;
+  deadline: bigint;
+  signature: string;
+}): Promise<string> {
+  if (!config.contracts.sessionTransferModule) throw new Error('No session transfer module configured');
+  const wallet = backendWallet();
+  const mod = new ethers.Contract(config.contracts.sessionTransferModule, SESSION_MODULE_ABI, wallet);
+  const tx = await mod.executeTransfer(
+    params.walletAddress,
+    params.sessionAddress,
+    params.toAddress,
+    params.amount,
+    currencyHash(params.currency),
+    params.deadline,
+    params.signature,
+  );
+  const receipt = await tx.wait() as ethers.TransactionReceipt;
+  await recordGasFromReceipt(receipt, 'relay');
+  return receipt.hash;
+}

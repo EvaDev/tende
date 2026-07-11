@@ -1,0 +1,38 @@
+@page { margin: 18mm 15mm; size: A4; }
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: #1f2937;
+  line-height: 1.5;
+  font-size: 11pt;
+  margin: 0;
+  padding: 0;
+}
+h1 { font-size: 22pt; color: #5c2d1e; margin: 0 0 8px; }
+h2 { font-size: 16pt; color: #5c2d1e; margin: 24px 0 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+h3 { font-size: 13pt; color: #374151; margin: 16px 0 6px; }
+p, li { font-size: 11pt; }
+.muted { color: #6b7280; font-size: 10pt; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5pt; background: #f3f4f6; padding: 1px 4px; border-radius: 3px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 10pt; }
+th, td { border: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; vertical-align: top; }
+th { background: #faf5f3; font-weight: 600; }
+.slide {
+  page-break-before: always;
+  page-break-after: always;
+  break-before: page;
+  break-after: page;
+  min-height: 0;
+  padding: 8mm 0;
+}
+.slide:first-of-type { page-break-before: auto; break-before: auto; }
+.slide:last-child { page-break-after: auto; break-after: auto; }
+.pill { display: inline-block; background: #ede9e7; color: #5c2d1e; font-size: 9pt; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-bottom: 8px; }
+.step { display: flex; gap: 10px; margin: 8px 0; }
+.step-n { width: 24px; height: 24px; border-radius: 12px; background: #f3f4f6; color: #5c2d1e; font-weight: 700; text-align: center; line-height: 24px; flex-shrink: 0; font-size: 10pt; }
+.box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin: 8px 0; background: #fafafa; }
+.box h4 { margin: 0 0 6px; font-size: 11pt; }
+.callout { border-left: 4px solid #5c2d1e; background: #faf5f3; padding: 10px 12px; margin: 12px 0; font-size: 10.5pt; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+ul { margin: 8px 0; padding-left: 20px; }

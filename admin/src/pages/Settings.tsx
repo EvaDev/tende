@@ -218,6 +218,22 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* ── Payment relay ── */}
+      {config && <Card>
+        <CardHeader><CardTitle>Payment relay (gas)</CardTitle></CardHeader>
+        <p className="text-sm text-gray-500 -mt-2 mb-1">
+          Controls how consumer payments are authorized on-chain. The platform always pays gas;
+          these settings change <em>how much</em> gas each payment costs.
+        </p>
+        <ToggleRow
+          label="Session keys (recommended for micropayments)"
+          description="On: passkey approves once per 24h session; individual payments use a cheap device session key (~90k gas vs ~330k with WebAuthn every time). Off: every payment requires a passkey signature (safer, more expensive). Requires SessionTransferModule deployed — set SESSION_TRANSFER_MODULE_ADDRESS on the API. Existing Safes registered before the module was wired need a one-time module enable."
+          value={config['feature.session_keys'] === 'true'}
+          disabled={!isAdmin}
+          onChange={() => toggleConfig('feature.session_keys', config['feature.session_keys'] ?? 'false')}
+        />
+      </Card>}
+
       {/* ── Consumer feature flags — only shown when config is loaded ── */}
       {config && <Card>
         <CardHeader><CardTitle>Consumer App Features</CardTitle></CardHeader>

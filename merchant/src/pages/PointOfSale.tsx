@@ -230,7 +230,7 @@ export default function PointOfSale() {
 
   async function sendChangeTag() {
     if (!activeStore) { setChangeError('Select a store first'); return; }
-    if (!changeTag.trim() || !changeAmount) { setChangeError('Enter @tag and amount'); return; }
+    if (!changeTag.trim() || !changeAmount) { setChangeError('Enter @tag or account number, and amount'); return; }
     setChangeLoading(true);
     setChangeError('');
     try {
@@ -433,7 +433,7 @@ export default function PointOfSale() {
                 onClick={() => { setChangeMode('tag'); setChangeQr(null); }}
                 className={`flex-1 py-2 rounded-lg text-sm font-medium ${changeMode === 'tag' ? 'bg-brand-accent text-white' : 'border border-gray-300'}`}
               >
-                Send to @tag
+                Send to customer
               </button>
             </div>
 
@@ -464,8 +464,12 @@ export default function PointOfSale() {
             {changeMode === 'tag' && (
               <>
                 <div>
-                  <Label>Customer @tag</Label>
-                  <Input value={changeTag} onChange={e => setChangeTag(e.target.value)} placeholder="@customer" />
+                  <Label>Customer @tag or account number</Label>
+                  <Input
+                    value={changeTag}
+                    onChange={e => setChangeTag(e.target.value)}
+                    placeholder="@customer or 1006"
+                  />
                 </div>
                 <Button onClick={sendChangeTag} disabled={changeLoading} className="w-full">
                   {changeLoading ? 'Sending…' : 'Send change'}

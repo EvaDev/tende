@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Merchant app — About</title>
+  <link rel="stylesheet" href="_print.css" />
+</head>
+<body>
+  <h1>About this app</h1>
+  <p class="muted">How the Merchant app fits into the platform.</p>
+
+  <h2>A separate app, not a separate service</h2>
+  <p><code>/merchant</code> is its own React/Vite app (port <code>5175</code>, alongside consumer <code>5173</code> and admin <code>5174</code>) — but it talks to the <strong>same Express backend on port 3001</strong>. There is no separate merchant service or database; route files are mounted on the existing server (<code>memberAuth.routes.ts</code>, <code>settlement.routes.ts</code>, <code>merchantSelf.routes.ts</code>).</p>
+
+  <h2>Why a separate app</h2>
+  <p>A merchant is a business with staff turnover and shared tills — a different trust context from an individual consumer. The merchant app has <strong>no wallet, no wagmi, no RainbowKit</strong>. Custody (one corporate account) is split from access (many operators with passkey login and roles) and execution authority (settlement above a threshold needs second approval).</p>
+
+  <h2>Org / member model</h2>
+  <p>A merchant can have many <strong>operators</strong> (<code>merchant_members</code>), each with a role:</p>
+  <table>
+    <thead><tr><th>Role</th><th>Can do</th></tr></thead>
+    <tbody>
+      <tr><td>cashier</td><td>Ring up Point of Sale, view Sales and Products (read-only)</td></tr>
+      <tr><td>store_manager</td><td>Same as cashier (reserved for future store-scoped limits)</td></tr>
+      <tr><td>org_admin (head office)</td><td>Team, My Business, Products catalog, settlement approval above threshold</td></tr>
+    </tbody>
+  </table>
+  <p>Operators sign in with a <strong>passkey</strong> (WebAuthn) — not a Safe wallet signer. First login is a claim ceremony via invite ID + email.</p>
+
+  <h2>Custody — why no new wallet was needed</h2>
+  <p>Receiving needs no signature (<code>trustedCounterparty</code> push). <code>withdrawToExternal</code> is <code>onlyRole(ADMIN_EXECUTOR_ROLE)</code> — backend-signed, no merchant private key. Head-office settlement approval is an <strong>off-chain</strong> rule before that call.</p>
+
+  <h2>Settlement threshold &amp; approval</h2>
+  <p>Any operator can request a payout. At/below threshold it executes immediately; above threshold a <strong>different</strong> org_admin must approve. Settlement resolves fiat currency to pegged on-chain token (e.g. ZAR → TTZA).</p>
+
+  <h2>Origin note for WebAuthn</h2>
+  <p><code>WEBAUTHN_ORIGIN</code> is a comma-separated list so consumer (5173) and merchant (5175) can complete passkey ceremonies against the same backend.</p>
+
+  <h2>API — member auth (no wallet)</h2>
+  <table>
+    <thead><tr><th>Method · Path</th><th>Auth</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>POST /api/member-auth/invite</td><td>Org admin</td><td>Invite operator → memberId</td></tr>
+      <tr><td>POST /api/member-auth/claim-options</td><td>Public</td><td>WebAuthn registration challenge</td></tr>
+      <tr><td>POST /api/member-auth/claim</td><td>Public</td><td>Claim invited seat with passkey</td></tr>
+      <tr><td>POST /api/member-auth/login-options</td><td>Public</td><td>WebAuthn login challenge</td></tr>
+      <tr><td>POST /api/member-auth/login</td><td>Public</td><td>Verify assertion → member JWT</td></tr>
+      <tr><td>GET /api/member-auth/me</td><td>Member JWT</td><td>Current operator + org</td></tr>
+      <tr><td>GET /api/member-auth/members</td><td>Org admin</td><td>Team roster</td></tr>
+    </tbody>
+  </table>
+
+  <h2>API — settlement</h2>
+  <table>
+    <thead><tr><th>Method · Path</th><th>Auth</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>GET·POST /api/settlement/config</td><td>Member / Org admin</td><td>Payout threshold</td></tr>
+      <tr><td>GET·POST /api/settlement/requests</td><td>Member</td><td>List / request payout</td></tr>
+      <tr><td>POST /api/settlement/requests/:id/approve</td><td>Org admin</td><td>Approve pending request</td></tr>
+      <tr><td>POST /api/settlement/requests/:id/reject</td><td>Org admin</td><td>Reject pending request</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Change vouchers (digital change at till)</h2>
+  <p>When a customer would receive coins as change, a cashier can issue a <strong>change voucher</strong> — credit to their wallet. Add a product with delivery type <strong>Voucher</strong>.</p>
+  <table>
+    <thead><tr><th>Step</th><th>Who</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Cashier (POS)</td><td>Issue change voucher → QR or Send to @tag</td></tr>
+      <tr><td>2a</td><td>Customer (QR)</td><td>Receive → scan change voucher QR</td></tr>
+      <tr><td>2b</td><td>Customer (link)</td><td>Open deep link in Receive</td></tr>
+      <tr><td>2c</td><td>Customer (@tag)</td><td>Direct credit to @tag</td></tr>
+      <tr><td>3</td><td>On-chain</td><td>Debit merchant claim, credit consumer (15 min QR expiry)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>API — merchant self-service</h2>
+  <p>Mounted at <code>/api/merchant</code> — resolves merchant from member JWT. Powers POS, Sales, Products, My Business.</p>
+  <table>
+    <thead><tr><th>Method · Path</th><th>Auth</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>GET /api/merchant/me</td><td>Member</td><td>Own profile</td></tr>
+      <tr><td>PATCH /api/merchant/me</td><td>Org admin</td><td>Edit business details</td></tr>
+      <tr><td>GET·POST /api/merchant/me/products</td><td>Member / Org admin</td><td>POS catalog</td></tr>
+      <tr><td>GET·POST /api/merchant/me/stores</td><td>Member / Org admin</td><td>Store locations</td></tr>
+      <tr><td>GET /api/merchant/me/sales</td><td>Member</td><td>Sales ledger</td></tr>
+      <tr><td>POST /api/merchant/me/change-voucher/*</td><td>Member</td><td>Issue change vouchers</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Not yet built</h2>
+  <p>Invite-link/email-token flow; bank off-ramp for settlement (destination must be on-chain address today); per-store product catalogs (products filtered by currency at POS today).</p>
+</body>
+</html>

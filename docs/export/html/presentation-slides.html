@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>1Voucher — System overview (slides)</title>
+  <link rel="stylesheet" href="_print.css" />
+</head>
+<body>
+
+<section class="slide">
+  <span class="pill">Overview</span>
+  <h1>1Voucher — How the system works</h1>
+  <p class="muted">From onboarding to value movement</p>
+  <p>A Web2-first fintech with an onchain compliance and settlement layer. Consumers see a simple balance; the protocol holds claims in a Vault backed by treasury tokens (e.g. TTZA, TTMW).</p>
+  <div class="grid-3">
+    <div class="box"><h4>Consumer app</h4><ul><li>Passkey wallet</li><li>Spend / save balances</li><li>Pay, remit, redeem vouchers</li></ul></div>
+    <div class="box"><h4>Admin console</h4><ul><li>Countries &amp; currencies</li><li>Treasury ops</li><li>Merchants &amp; compliance</li></ul></div>
+    <div class="box"><h4>Merchant console</h4><ul><li>POS &amp; products</li><li>Accept payments</li><li>Settle to fiat</li></ul></div>
+  </div>
+  <div class="callout">Phase 1 pilot: ZA corridor live; additional corridors (e.g. MWK / TTMW) follow the same pattern.</div>
+</section>
+
+<section class="slide">
+  <span class="pill">Overview</span>
+  <h1>Three setup paths before money moves</h1>
+  <table>
+    <thead><tr><th>Actor</th><th>What they configure</th><th>What it unlocks</th></tr></thead>
+    <tbody>
+      <tr><td>Admin</td><td>Countries, fiat currencies, treasury tokens, corridors, KYC tiers</td><td>Which markets exist and which onchain tokens back them</td></tr>
+      <tr><td>Merchant</td><td>Business profile, wallet, settlement preference (fiat or onchain)</td><td>Ability to receive consumer payments</td></tr>
+      <tr><td>Consumer</td><td>Passkey, country, display name, optional ENS tag</td><td>Personal Safe wallet + Vault balance claim</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="slide">
+  <span class="pill">Admin setup</span>
+  <h1>Admin: countries, currencies &amp; treasury tokens</h1>
+  <div class="step"><span class="step-n">1</span><div><strong>Add country</strong><br/>Countries table links ISO code → fiat currency (e.g. ZA → ZAR, MW → MWK). Controls KYC tiers and product availability.</div></div>
+  <div class="step"><span class="step-n">2</span><div><strong>Add treasury currency row</strong><br/>Currencies page: type TREASURY, code TTZA/TTMW, fiat anchor (ZAR/MWK). Saves to DB only — no chain tx yet.</div></div>
+  <div class="step"><span class="step-n">3</span><div><strong>Deploy corridor token (explicit action)</strong><br/>Deploy button creates ERC-1967 proxy + initialize; registers stablecoins row; wires Vault.setCurrencyTreasuryToken(fiat, proxy).</div></div>
+  <div class="step"><span class="step-n">4</span><div><strong>Configure corridors &amp; partners</strong><br/>Remittance corridors, payout partners, FX overrides — off-chain routing for cross-border exits.</div></div>
+  <div class="callout">Saving a currency never auto-deploys onchain. Deploy requires admin confirmation and deployer wallet gas.</div>
+</section>
+
+<section class="slide">
+  <span class="pill">Consumer onboarding</span>
+  <h1>Consumer registration → live wallet</h1>
+  <div class="step"><span class="step-n">1</span><div><strong>Passkey created on device</strong> — WebAuthn P-256 key, no seed phrase.</div></div>
+  <div class="step"><span class="step-n">2</span><div><strong>Backend resolves Safe signer</strong> — SafeWebAuthnSignerFactory → deterministic signer address.</div></div>
+  <div class="step"><span class="step-n">3</span><div><strong>Consumer.registerConsumer onchain</strong> — Deploys Safe proxy; stores country hash, name hash, KYC level 0.</div></div>
+  <div class="step"><span class="step-n">4</span><div><strong>Off-chain profile (best-effort)</strong> — idOS credential, ENS subdomain, Pimlico paymaster whitelist.</div></div>
+  <div class="step"><span class="step-n">5</span><div><strong>consumers row in Postgres</strong> — Links wallet, country, KYC, registration step for retries.</div></div>
+  <p>Result: consumer has a gasless-capable Safe address registered onchain. Balance is still zero until cash-in.</p>
+</section>
+
+<section class="slide">
+  <span class="pill">Merchant onboarding</span>
+  <h1>Merchant registration → can receive payments</h1>
+  <div class="step"><span class="step-n">1</span><div><strong>Wallet signs nonce</strong> — POST /api/merchants/register proves wallet ownership.</div></div>
+  <div class="step"><span class="step-n">2</span><div><strong>merchants row</strong> — Name, country, settlement type, verification PENDING.</div></div>
+  <div class="step"><span class="step-n">3</span><div><strong>Onchain whitelist (best-effort)</strong> — TreasuryToken.addToWhitelist; Vault.setTrustedCounterparty.</div></div>
+  <div class="step"><span class="step-n">4</span><div><strong>Admin verification</strong> — Admin approves KYB → merchant goes live.</div></div>
+  <div class="callout">Trusted merchants bypass consumer-to-consumer country matching — consumers can pay them without P2P restrictions.</div>
+</section>
+
+<section class="slide">
+  <span class="pill">Value model</span>
+  <h1>What consumers actually hold</h1>
+  <p>Consumers see one fungible balance (e.g. R500). They never hold TTZA/TTMW ERC-20 in their wallet.</p>
+  <div class="grid-2">
+    <div class="box"><h4>Spend balance (ZAR claim)</h4><ul><li>Vault ledger entry — ERC-4626-style shares pinned 1:1</li><li>Backed by TTZA sitting in the Vault</li><li>Flat 1:1 — no yield to consumer</li></ul></div>
+    <div class="box"><h4>Treasury token (TTZA, TTMW…)</h4><ul><li>Protocol bank-cash token — permissioned ERC-20</li><li>Mint on fiat-in; swept on merchant settlement</li><li>Closed-loop, domestic-only transfers</li></ul></div>
+  </div>
+  <p>Accounting: TT in vault ≈ sum of all ZAR claims + unallocated pool. USD save balance is separate (USDC reserve).</p>
+</section>
+
+<section class="slide">
+  <span class="pill">Value flows</span>
+  <h1>Cash-in: how value enters the system</h1>
+  <p>After registration, a consumer needs a funded Vault claim before they can pay anyone.</p>
+  <div class="step"><span class="step-n">1</span><div><strong>Off-chain fiat or voucher</strong> — Bank deposit reference or voucher number in deposit_references.</div></div>
+  <div class="step"><span class="step-n">2</span><div><strong>Mint treasury token → Vault</strong> — Backend mints TTZA/TTMW to Vault contract.</div></div>
+  <div class="step"><span class="step-n">3</span><div><strong>Credit consumer claim</strong> — Vault.adminCredit(wallet, amount, ZAR).</div></div>
+  <div class="step"><span class="step-n">4</span><div><strong>Audit trail</strong> — deposit_references + indexer chain events.</div></div>
+  <div class="callout">POC: Admin Treasury → dev-credit simulates this on Sepolia. Production gates mint on reconciled bank deposit.</div>
+</section>
+
+<section class="slide">
+  <span class="pill">Value flows</span>
+  <h1>After cash-in: how value moves</h1>
+  <table>
+    <thead><tr><th>Flow</th><th>Mechanism</th><th>Onchain effect</th></tr></thead>
+    <tbody>
+      <tr><td>Pay merchant</td><td>Consumer signs Vault.transfer → backend relays</td><td>Ledger debit/credit; merchant accumulates ZAR claim</td></tr>
+      <tr><td>P2P transfer</td><td>Passkey-signed Vault.transfer (same country)</td><td>Claim moves wallet → wallet</td></tr>
+      <tr><td>WhatsApp escrow</td><td>Transfer to custodial escrow + claim link</td><td>Held until recipient onboarded</td></tr>
+      <tr><td>ZAR ↔ USD convert</td><td>adminDebit + adminCredit at FX − spread</td><td>Reallocates claims; may mint TT if pool short</td></tr>
+      <tr><td>Remittance</td><td>Lock → partner payout → settle</td><td>Burn/sweep TT, debit claim</td></tr>
+      <tr><td>Merchant settlement</td><td>Admin approves → debit merchant claim</td><td>TT swept to platform treasury</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="slide">
+  <span class="pill">Technology</span>
+  <h1>Onchain architecture</h1>
+  <div class="grid-3">
+    <div class="box"><h4>Consumer.sol</h4><ul><li>Safe wallet factory</li><li>Identity + KYC registry</li><li>Compliance event log</li></ul></div>
+    <div class="box"><h4>Vault.sol</h4><ul><li>Unified balance ledger</li><li>Remittance + FX paths</li><li>ERC-4626 reserve semantics</li></ul></div>
+    <div class="box"><h4>TreasuryToken.sol</h4><ul><li>Shared logic (one impl)</li><li>Compliance in _update hook</li><li>Mint/burn/freeze/whitelist</li></ul></div>
+  </div>
+  <p>Each corridor (TTZA, TTMW…) is a separate <strong>ERC-1967 proxy instance</strong> — same logic, different initialize(name, symbol).</p>
+  <table>
+    <thead><tr><th>Pattern</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>Upgrade model</td><td>UUPS proxies — stable addresses, swappable implementations</td></tr>
+      <tr><td>Consumer wallets</td><td>Safe v1.4.1 + WebAuthn signer; ERC-4337 paymaster planned</td></tr>
+      <tr><td>Two platform wallets</td><td>Deployer (cold admin) vs Backend (hot ops + gas)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="slide">
+  <span class="pill">Technology</span>
+  <h1>Database (PostgreSQL)</h1>
+  <div class="grid-2">
+    <div class="box"><h4>System config</h4><ul><li>countries, currencies, stablecoins</li><li>kyc_levels, corridors, payout_partners</li><li>contract_deployments</li></ul></div>
+    <div class="box"><h4>Identity &amp; commerce</h4><ul><li>consumers, webauthn_credentials</li><li>merchants, products, merchant_sales</li><li>settlement_requests</li></ul></div>
+    <div class="box"><h4>Money movement audit</h4><ul><li>deposit_references</li><li>consumer_conversions</li><li>change_vouchers, pending_claims</li></ul></div>
+    <div class="box"><h4>Chain mirror</h4><ul><li>chain_events + indexer_cursor</li><li>protocol_gas_costs</li><li>app_config</li></ul></div>
+  </div>
+</section>
+
+<section class="slide">
+  <span class="pill">Technology</span>
+  <h1>API layer (Node.js REST)</h1>
+  <div class="grid-2">
+    <div class="box"><h4>/api — public &amp; authenticated</h4><ul><li>/register, /auth/passkey/*</li><li>/consumer/* — balance, convert, transfer</li><li>/merchants/* — signup, POS</li><li>/countries, /fx/rate</li></ul></div>
+    <div class="box"><h4>/api/admin — operator</h4><ul><li>Treasury dev-credit, harvest</li><li>CRUD countries, currencies</li><li>Reports: revenue, events</li><li>treasury-instances</li></ul></div>
+  </div>
+  <p>Backend orchestrates multi-step flows; contracts enforce compliance gates. JWT roles control UI access — separate from onchain AccessControl.</p>
+</section>
+
+<section class="slide">
+  <span class="pill">Summary</span>
+  <h1>End-to-end: setup → funded → payment</h1>
+  <div class="step"><span class="step-n">1</span><div><strong>Admin enables ZA + TTZA</strong> — Country, currency, deploy proxy, wire Vault.</div></div>
+  <div class="step"><span class="step-n">2</span><div><strong>Merchant registers + admin verifies</strong> — Whitelisted on TT + Vault trusted.</div></div>
+  <div class="step"><span class="step-n">3</span><div><strong>Consumer registers</strong> — Safe deployed, KYC level 0, zero balance.</div></div>
+  <div class="step"><span class="step-n">4</span><div><strong>Cash-in</strong> — Fiat/voucher → mint TT to Vault → credit ZAR claim.</div></div>
+  <div class="step"><span class="step-n">5</span><div><strong>Consumer pays merchant</strong> — Signed Vault.transfer; merchant ZAR claim increases.</div></div>
+  <div class="step"><span class="step-n">6</span><div><strong>Merchant settles (optional)</strong> — Claim debited, TT swept; bank payout off-chain.</div></div>
+  <div class="callout">Smart contracts = compliance ledger + settlement. Backend = orchestration, KYC, partners, and UX.</div>
+  <p class="muted" style="margin-top:24px">Source: 1Voucher codebase &amp; admin docs · Sepolia pilot · July 2026</p>
+</section>
+
+</body>
+</html>

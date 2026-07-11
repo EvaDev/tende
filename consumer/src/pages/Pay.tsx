@@ -4,12 +4,13 @@ import { AlertCircle, CheckCircle2, X, QrCode, Share2 } from 'lucide-react';
 import { DoubleChevron } from '@/components/DoubleChevron';
 import { QrScanner } from '@/components/QrScanner';
 import {
-  prepareTransfer, signAndSubmitTransfer, prepareEscrow, signAndSubmitEscrow,
-  type TransferResult, type EscrowResult,
+  executeTransfer, prepareEscrow, signAndSubmitEscrow,
+  type TransferResult, type EscrowResult, type TransferStep,
 } from '@/lib/pay';
 import { api } from '@/lib/api';
 import { isPasskeySupported } from '@/lib/passkey';
 import { getAppName } from '@/lib/brand';
+import PaymentProgress, { PAYMENT_STEPS } from '@/components/PaymentProgress';
 
 function looksLikePhone(v: string): boolean {
   const s = v.trim();
@@ -47,6 +48,7 @@ export default function Pay() {
   const [amount, setAmount] = useState('');
   const [error, setError]   = useState('');
   const [loading, setLoading] = useState(false);
+  const [payStep, setPayStep] = useState<TransferStep | null>(null);
   const [scanning, setScanning] = useState(false);
   const [result, setResult]   = useState<TransferResult | null>(null);
   const [escrow, setEscrow]   = useState<EscrowResult | null>(null);
@@ -110,21 +112,21 @@ export default function Pay() {
     if (!amt || amt <= 0)      { setError('Enter an amount'); return; }
     if (!to.trim())            { setError('Enter a destination'); return; }
     if (!isPasskeySupported()) { setError('Passkeys aren’t supported on this device.'); return; }
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setPayStep('prepare');
     try {
       if (phone) {
         const prepared = await prepareEscrow({ recipientPhone: to.trim(), amount, currency });
-        const r = await signAndSubmitEscrow(prepared);
+        const r = await signAndSubmitEscrow(prepared, setPayStep);
         setEscrow(r);
         window.open(r.waLink, '_blank');
       } else {
-        const prepared = await prepareTransfer({ to: to.trim(), amount, currency });
-        setResult(await signAndSubmitTransfer(prepared));
+        setResult(await executeTransfer({ to: to.trim(), amount, currency }, setPayStep));
       }
     } catch (e) {
       setError(friendly((e as Error).message));
     } finally {
       setLoading(false);
+      setPayStep(null);
     }
   }
 
@@ -167,6 +169,16 @@ export default function Pay() {
             </a>
           </div>
           <button onClick={() => navigate('/home')} className="w-full py-3.5 rounded-2xl bg-brand-accent text-brand-text font-semibold active:scale-95 transition-transform">Done</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading && payStep) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center px-6 bg-brand-bg">
+        <div className="w-full max-w-sm bg-brand-card rounded-2xl p-5 shadow-xl">
+          <PaymentProgress steps={PAYMENT_STEPS} currentId={payStep} />
         </div>
       </div>
     );
@@ -228,11 +240,14 @@ export default function Pay() {
             </button>
           </div>
           <input
-            value={to} placeholder="Tag, phone number, or scan a QR code"
+            value={to} placeholder="@tag, account number, phone, or scan QR"
             onChange={e => { setTo(e.target.value); setError(''); }}
             className="w-full bg-white border border-brand-accent/20 rounded-xl px-3 py-3 text-sm text-brand-accent outline-none focus:ring-2 focus:ring-brand-accent placeholder-brand-accent/30"
           />
           {phone && <p className="text-xs text-brand-accent/60 px-1">We’ll hold it and send a WhatsApp claim link to this number.</p>}
+          {!phone && /^\d{4,}$/.test(to.trim()) && (
+            <p className="text-xs text-brand-accent/60 px-1">Sending to account number {to.trim()}.</p>
+          )}
         </div>
 
         <button

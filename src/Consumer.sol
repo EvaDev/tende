@@ -127,6 +127,10 @@ contract Consumer is
     /// SafeModuleSetup helper (delegatecall target in setup() that enables modules).
     address public safeModuleSetup;
 
+    /// SessionTransferModule — enabled alongside 4337 when set. Lets session keys
+    /// authorize Vault.transfer without WebAuthn on every payment. address(0) = off.
+    address public sessionTransferModule;
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     event ConsumerRegistered(
@@ -157,6 +161,7 @@ contract Consumer is
     );
     event MaxConsumersUpdated(uint256 newMax);
     event Safe4337ConfigSet(address indexed module, address indexed moduleSetup);
+    event SessionTransferModuleSet(address indexed module);
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
@@ -215,6 +220,18 @@ contract Consumer is
         safe4337Module  = module;
         safeModuleSetup = moduleSetup;
         emit Safe4337ConfigSet(module, moduleSetup);
+    }
+
+    /// @notice Set the SessionTransferModule address. When non-zero and 4337 config is
+    ///         active, newly deployed Safes enable this module at setup. Existing Safes
+    ///         need a one-time enableModule SafeTx. Pass address(0) to stop enabling on
+    ///         new wallets (does not disable on already-deployed Safes).
+    function setSessionTransferModule(address module)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        sessionTransferModule = module;
+        emit SessionTransferModuleSet(module);
     }
 
     // ── Consumer registration ─────────────────────────────────────────────────
@@ -513,8 +530,10 @@ contract Consumer is
         bytes   memory setupData;
         address fallbackHandler;
         if (safe4337Module != address(0) && safeModuleSetup != address(0)) {
-            address[] memory modules = new address[](1);
+            uint256 moduleCount = sessionTransferModule != address(0) ? 2 : 1;
+            address[] memory modules = new address[](moduleCount);
             modules[0] = safe4337Module;
+            if (moduleCount == 2) modules[1] = sessionTransferModule;
             to              = safeModuleSetup;
             setupData       = abi.encodeWithSelector(ISafeModuleSetup.enableModules.selector, modules);
             fallbackHandler = safe4337Module;

@@ -62,6 +62,7 @@ export const config = {
     vault:           optional('VAULT_CONTRACT_ADDRESS'),
     treasuryTokenZA: optional('TREASURY_TOKEN_ZA_ADDRESS'),
     treasuryTokenZW: optional('TREASURY_TOKEN_ZW_ADDRESS'),
+    sessionTransferModule: optional('SESSION_TRANSFER_MODULE_ADDRESS'),
   },
 
   safe: {

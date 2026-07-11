@@ -14,7 +14,7 @@ const router = express.Router();
 
 router.get('/', async (_req: Request, res: Response): Promise<void> => {
   const result = await db.query<{ key: string; value: string }>(
-    `SELECT key, value FROM app_config WHERE key LIKE 'app.%' OR key LIKE 'brand.%'`
+    `SELECT key, value FROM app_config WHERE key LIKE 'app.%' OR key LIKE 'brand.%' OR key LIKE 'feature.%'`
   );
   const config: Record<string, string> = {};
   for (const row of result.rows) config[row.key] = row.value;
@@ -50,6 +50,10 @@ router.patch('/:key', requireAdmin, async (req: Request, res: Response): Promise
   const keyStr = String(key);
   if (keyStr.startsWith('revenue.')) invalidateRevenueConfigCache();
   if (keyStr === 'app.name' || keyStr === 'app.logo') invalidateAppBrandCache();
+  if (keyStr.startsWith('feature.')) {
+    const { invalidateFeatureCache } = await import('./appFeatures.js');
+    invalidateFeatureCache();
+  }
   res.json(result.rows[0]);
 });
 

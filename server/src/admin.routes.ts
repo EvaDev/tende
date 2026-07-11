@@ -423,7 +423,7 @@ router.get('/consumers', async (_req: Request, res: Response): Promise<void> => 
   try {
     const r = await db.query(
       `SELECT c.consumer_id as id, c.wallet_address, c.usd_wallet_address as safe_address,
-              c.kyc_level_id as kyc_level, k.level_name as kyc_level_name, c.ens_subdomain,
+              c.global_consumer_id, c.kyc_level_id as kyc_level, k.level_name as kyc_level_name, c.ens_subdomain,
               c.country_code, co.name as country_name,
               c.idos_credential_id IS NOT NULL as idos_profile, c.created_at
        FROM consumers c
@@ -763,7 +763,7 @@ router.post('/treasury/dev-credit', requireAdmin, async (req: Request, res: Resp
   }
   try {
     const { to, amount, reference } = req.body as { to?: string; amount?: string; reference?: string };
-    if (!to || !amount) { res.status(400).json({ error: 'recipient (0x or @tag) and amount required' }); return; }
+    if (!to || !amount) { res.status(400).json({ error: 'recipient (0x, @tag, or account number) and amount required' }); return; }
 
     let recipient: string;
     try { recipient = await resolveWalletOrTag(to); }
@@ -840,7 +840,7 @@ router.post('/consumers/kyc-level', requireAdmin, async (req: Request, res: Resp
     const { wallet, level } = req.body as { wallet?: string; level?: number | string };
     const lvl = Number(level);
     if (!Number.isInteger(lvl) || lvl < 0 || lvl > 3) { res.status(400).json({ error: 'level must be 0–3' }); return; }
-    if (!wallet) { res.status(400).json({ error: 'wallet (0x or @tag) required' }); return; }
+    if (!wallet) { res.status(400).json({ error: 'wallet (0x, @tag, or account number) required' }); return; }
 
     let recipient: string;
     try { recipient = await resolveWalletOrTag(wallet); }
