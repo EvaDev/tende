@@ -7,7 +7,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdir, access } from 'node:fs/promises';
+import { mkdir, access, copyFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -18,6 +18,11 @@ const OUT_DIR = path.join(ROOT, 'docs/export/pdf');
 const HTML_DIR = path.join(ROOT, 'docs/export/html');
 const ADMIN_DIST = path.join(ROOT, 'admin/dist');
 const PREVIEW_PORT = 5198;
+const DOWNLOADS_DIR = path.join(
+  process.env.HOME || process.env.USERPROFILE || '',
+  'Downloads',
+  'imali-docs',
+);
 
 const ADMIN_ROUTES = [
   { file: 'admin-about.pdf', path: '/about', expandKeyDecisions: true, waitFor: /key decisions|about/i },
@@ -145,6 +150,15 @@ async function main() {
   }
 
   console.log(`\nDone — PDFs written to ${OUT_DIR}`);
+
+  if (DOWNLOADS_DIR && DOWNLOADS_DIR !== path.join('Downloads', 'imali-docs')) {
+    await mkdir(DOWNLOADS_DIR, { recursive: true });
+    const files = await readdir(OUT_DIR);
+    for (const file of files.filter(f => f.endsWith('.pdf'))) {
+      await copyFile(path.join(OUT_DIR, file), path.join(DOWNLOADS_DIR, file));
+    }
+    console.log(`Also copied to ${DOWNLOADS_DIR}`);
+  }
 }
 
 main().catch(err => {

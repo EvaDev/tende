@@ -28,7 +28,7 @@
     <tbody>
       <tr><td>Admin</td><td>Countries, fiat currencies, treasury tokens, corridors, KYC tiers</td><td>Which markets exist and which onchain tokens back them</td></tr>
       <tr><td>Merchant</td><td>Business profile, wallet, settlement preference (fiat or onchain)</td><td>Ability to receive consumer payments</td></tr>
-      <tr><td>Consumer</td><td>Passkey, country, display name, optional ENS tag</td><td>Personal Safe wallet + Vault balance claim</td></tr>
+      <tr><td>Consumer</td><td>Passkey, country, display name, optional GNS tag</td><td>Personal Safe wallet + Vault balance claim</td></tr>
     </tbody>
   </table>
 </section>
@@ -49,7 +49,7 @@
   <div class="step"><span class="step-n">1</span><div><strong>Passkey created on device</strong> — WebAuthn P-256 key, no seed phrase.</div></div>
   <div class="step"><span class="step-n">2</span><div><strong>Backend resolves Safe signer</strong> — SafeWebAuthnSignerFactory → deterministic signer address.</div></div>
   <div class="step"><span class="step-n">3</span><div><strong>Consumer.registerConsumer onchain</strong> — Deploys Safe proxy; stores country hash, name hash, KYC level 0.</div></div>
-  <div class="step"><span class="step-n">4</span><div><strong>Off-chain profile (best-effort)</strong> — idOS credential, ENS subdomain, Pimlico paymaster whitelist.</div></div>
+  <div class="step"><span class="step-n">4</span><div><strong>Off-chain profile (best-effort)</strong> — idOS credential, GNS subdomain (.gwei), Pimlico paymaster whitelist.</div></div>
   <div class="step"><span class="step-n">5</span><div><strong>consumers row in Postgres</strong> — Links wallet, country, KYC, registration step for retries.</div></div>
   <p>Result: consumer has a gasless-capable Safe address registered onchain. Balance is still zero until cash-in.</p>
 </section>

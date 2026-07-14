@@ -40,6 +40,9 @@ const PUBLIC_ADMIN_READS = new Set([
 const PAGE_GATED_READS = (path: string) =>
   path.startsWith('/reports') ||
   path === '/contract-deployments' ||
+  path === '/treasury-instances' ||
+  path === '/treasury' ||
+  path === '/registration-fields' ||
   path === '/assets' ||
   path === '/asset-metadata';
 router.use((req: Request, res: Response, next): void => {
@@ -701,7 +704,7 @@ router.post('/kyc-levels', async (req: Request, res: Response): Promise<void> =>
 //       'vault'    = an asset the platform HOLDS in the Vault (underlying holding).
 interface SupplyRow { token: string; label: string; address: string; decimals: number; supply: string; kind: 'treasury' | 'vault'; }
 
-router.get('/treasury', async (_req: Request, res: Response): Promise<void> => {
+router.get('/treasury', allowPublicPage('treasury'), async (_req: Request, res: Response): Promise<void> => {
   const vaultAddr = process.env['VAULT_CONTRACT_ADDRESS'] ?? config.contracts.vault;
   const provider  = new ethers.JsonRpcProvider(config.chain.rpcUrl);
   const erc20 = (addr: string) => new ethers.Contract(
@@ -1001,7 +1004,7 @@ router.post('/paymaster/fund-signer', requireAdmin, async (req: Request, res: Re
 
 // ── Registration Config ───────────────────────────────────────────────────────
 
-router.get('/registration-fields', async (_req: Request, res: Response): Promise<void> => {
+router.get('/registration-fields', allowPublicPage('registration'), async (_req: Request, res: Response): Promise<void> => {
   try {
     const r = await db.query(
       `SELECT field_key, label, included, required, verification_method, sort_order

@@ -19,6 +19,10 @@ Requires Node 18+ and Chromium (installed automatically via Playwright on first 
 | `pdf/merchant-about.pdf` | `html/merchant-about.html` (merchant app requires login in UI) |
 | `pdf/presentation-slides.pdf` | `html/presentation-slides.html` (12-slide deck) |
 
+A copy of every PDF is also written to `~/Downloads/imali-docs/`.
+
+From the admin **Docs** page, use **Export PDF** to download the currently open section straight to your browser Downloads folder (live page content).
+
 ## Source artifacts
 
 - `1voucher-system-overview.canvas.tsx` — interactive Cursor Canvas slide deck (original)

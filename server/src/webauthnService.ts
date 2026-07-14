@@ -31,6 +31,13 @@ export function newChallenge(): string {
   challenges.set(challenge, now + CHALLENGE_TTL_MS);
   return challenge;
 }
+
+/** Register a known challenge (e.g. hash of a withdrawal intent) for passkey get(). */
+export function registerChallenge(challenge: string, ttlMs = CHALLENGE_TTL_MS): void {
+  const now = Date.now();
+  for (const [c, exp] of challenges) if (exp < now) challenges.delete(c);
+  challenges.set(challenge, now + ttlMs);
+}
 function consumeChallenge(challenge: string): boolean {
   const exp = challenges.get(challenge);
   if (exp === undefined || exp < Date.now()) { challenges.delete(challenge); return false; }

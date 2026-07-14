@@ -289,6 +289,15 @@ export async function recordPlatformReserve(currencyCode: string, amount: bigint
 // USD claims). Used to gate ZAR→USD conversions so we never credit more USD claims
 // than there is reserve to honour.
 const ERC20_BAL_ABI = ['function balanceOf(address) view returns (uint256)'];
+
+/** ERC-20 balance held by the Vault contract (inventory behind claims). */
+export async function vaultErc20Balance(tokenAddress: string): Promise<bigint> {
+  if (!config.contracts.vault) throw new Error('No vault address configured');
+  const provider = new ethers.JsonRpcProvider(config.chain.rpcUrl);
+  const token = new ethers.Contract(tokenAddress, ERC20_BAL_ABI, provider);
+  return await token.balanceOf(config.contracts.vault) as bigint;
+}
+
 export async function usdcReserveUnits(): Promise<bigint> {
   if (!config.contracts.vault) return 0n;
   const provider = new ethers.JsonRpcProvider(config.chain.rpcUrl);

@@ -225,6 +225,45 @@ router.get('/transfers', allowPublicPage('reports'), async (_req: Request, res: 
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });
 
+// GET /api/admin/reports/withdrawals — external USDC withdrawals + Travel Rule beneficiary.
+router.get('/withdrawals', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const labels = await buildPartyLabels();
+    const r = await db.query<{
+      id: string; from_wallet: string; to_address: string; gross_units: string; fee_units: string;
+      net_units: string; fee_bps: number; status: string; withdraw_tx: string | null;
+      recipient_name: string | null; recipient_id_number: string | null; recipient_phone: string | null;
+      recipient_country: string | null; recipient_relationship: string | null;
+      created_at: Date; executed_at: Date | null; sender_tag: string | null; sender_display: string | null;
+    }>(
+      `SELECT w.id, w.from_wallet, w.to_address, w.gross_units::text, w.fee_units::text, w.net_units::text,
+              w.fee_bps, w.status, w.withdraw_tx, w.recipient_name, w.recipient_id_number, w.recipient_phone,
+              w.recipient_country, w.recipient_relationship, w.created_at, w.executed_at,
+              c.ens_subdomain AS sender_tag, c.display_name AS sender_display
+         FROM consumer_withdrawals w
+         LEFT JOIN consumers c ON c.consumer_id = w.consumer_id
+        ORDER BY w.created_at DESC
+        LIMIT 500`,
+    );
+    res.json(r.rows.map(row => {
+      const gross = Number(row.gross_units);
+      const fee = Number(row.fee_units);
+      const net = Number(row.net_units);
+      return {
+        ...row,
+        currency: 'USDC',
+        grossDisplay: (gross / 1e6).toFixed(2),
+        feeDisplay: (fee / 1e6).toFixed(2),
+        netDisplay: (net / 1e6).toFixed(2),
+        fromLabel: row.sender_display || row.sender_tag || partyLabel(row.from_wallet, labels),
+        toLabel: row.recipient_name
+          ? `${row.recipient_name} (${row.to_address.slice(0, 6)}…${row.to_address.slice(-4)})`
+          : partyLabel(row.to_address, labels),
+      };
+    }));
+  } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+});
+
 // GET /api/admin/reports/gas-fees — total ETH gas paid by the platform relayer.
 router.get('/gas-fees', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
   try {

@@ -23,7 +23,7 @@ const STEP_LABEL: Record<string, string> = {
   signer:  'Resolve passkey signer',
   deploy:  'Deploy wallet on-chain',
   idos:    'idOS profile / credential',
-  ens:     'ENS subdomain',
+  ens:     'GNS subdomain',
   pimlico: 'Paymaster whitelist',
   db:      'Write consumer record',
 };

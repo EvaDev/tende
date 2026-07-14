@@ -5,16 +5,17 @@ export default function Payments() {
     <>
       <Section title="Two ways to send money">
         <p className="text-sm text-gray-700 leading-relaxed">
-          Consumers send from the <strong>Vault unified balance</strong> they hold (a ZAR claim).
-          There are two paths, both gasless to the consumer:
+          Consumers send from the <strong>Vault unified balance</strong> they hold.
+          There are three paths, all gasless to the consumer:
         </p>
         <Table
-          head={['', 'Account-to-account', 'Via WhatsApp (escrow)']}
+          head={['', 'Account-to-account', 'Via WhatsApp (escrow)', 'External wallet (USDC)']}
           rows={[
-            ['Recipient', 'Has an account (@tag or 0x wallet)', 'A phone number — may have no account yet'],
-            ['Mechanism', 'User-signed Vault.transfer, relayed', 'Vault.transfer to escrow + claim link'],
-            ['Custody', 'Moves wallet → wallet directly', 'Held at custodial escrow until claimed'],
-            ['Gate', 'On-chain: both parties KYC’d', 'Sender KYC’d; recipient KYC’s on claim'],
+            ['Recipient', 'Has an account (@tag or registered 0x)', 'A phone number — may have no account yet', 'Any 0x EOA (e.g. MetaMask)'],
+            ['Mechanism', 'User-signed Vault.transfer, relayed', 'Vault.transfer to escrow + claim link', 'Vault.withdrawToExternal (admin executor after passkey)'],
+            ['Custody', 'Moves wallet → wallet directly', 'Held at custodial escrow until claimed', 'Irreversible ERC-20 USDC out'],
+            ['Currency', 'Any vault claim currency', 'Any vault claim currency', 'USDC only'],
+            ['Gate', 'Sender KYC limits (API); on-chain registered parties', 'Sender KYC limits; recipient KYC’s on claim', 'Sender KYC limits; destination KYC waived'],
           ]}
         />
       </Section>
@@ -27,6 +28,21 @@ export default function Payments() {
           gate requires each party to be a KYC’d consumer (or a trusted merchant/treasury), so the rule is
           enforced by the contract, not the server. See <strong>Gas fees</strong> for how sponsorship works.
         </p>
+      </Section>
+
+      <Section title="External USDC withdrawal (MetaMask / unknown 0x)">
+        <p className="text-sm text-gray-700 leading-relaxed">
+          When the destination is a bare <Code>0x</Code> address that is <strong>not</strong> a registered
+          iMali wallet, Send switches to a <strong>USDC withdrawal</strong>. The user must hold (or convert to)
+          USDC first. After passkey approval, the backend calls <Code>Vault.withdrawToExternal</Code> to push
+          real USDC ERC-20 to that address. This is <strong>not escrow</strong> — it is irreversible.
+        </p>
+        <ul className="space-y-2 list-disc pl-5 text-sm text-gray-700">
+          <li><span className="font-semibold text-gray-900">Fee.</span> <Code>revenue.withdrawal_fee_bps</Code> (Settings → Revenue) is deducted from the gross; net ERC-20 goes out and the fee is retained as a platform USDC claim.</li>
+          <li><span className="font-semibold text-gray-900">KYC.</span> Sender single/daily/monthly limits from <Code>kyc_levels</Code> are enforced in the API against a spend ledger. Destination KYC is not required.</li>
+          <li><span className="font-semibold text-gray-900">Travel Rule.</span> The sender must declare the beneficiary’s <strong>full name</strong> (plus optional ID/passport, phone, country, relationship). Details are stored on <Code>consumer_withdrawals</Code> and shown under Reports → Transfers.</li>
+          <li><span className="font-semibold text-gray-900">Inventory.</span> The Vault must hold enough ERC-20 USDC to cover the net send (claims alone are not enough).</li>
+        </ul>
       </Section>
 
       <Section title="Send via WhatsApp (escrow for an unonboarded recipient)">

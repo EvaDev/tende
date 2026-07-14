@@ -27,8 +27,8 @@ export default function Api() {
           [<Code>GET /api/auth/passkey/register-options</Code>, <Pub />, 'WebAuthn registration challenge'],
           [<Code>POST /api/auth/passkey/login-options</Code>, <Pub />, 'WebAuthn login challenge (usernameless)'],
           [<Code>POST /api/auth/passkey/login</Code>, <Pub />, 'Verify assertion → consumer JWT'],
-          [<Code>POST /api/register</Code>, <Pub />, 'New consumer: deploy Safe, idOS profile+credential, ENS, Pimlico'],
-          [<Code>POST /api/register/check-ens</Code>, <Pub />, 'ENS subdomain availability'],
+          [<Code>POST /api/register</Code>, <Pub />, 'New consumer: deploy Safe, idOS profile+credential, GNS (.gwei) tag, Pimlico'],
+          [<Code>POST /api/register/check-ens</Code>, <Pub />, 'GNS payment-tag availability under imali.gwei'],
           [<Code>POST /api/register/recover</Code>, <Pub />, 'Recover wallet after lost passkey (idOS-verified)'],
         ]} />
       </Section>
@@ -45,6 +45,8 @@ export default function Api() {
           [<Code>POST /api/consumer/transfer/submit</Code>, <Jwt />, 'Relay the signed transfer (gasless)'],
           [<Code>POST /api/consumer/transfer/escrow/prepare</Code>, <Jwt />, 'Build a send-to-escrow (WhatsApp) transfer'],
           [<Code>POST /api/consumer/transfer/escrow/submit</Code>, <Jwt />, 'Relay + mint claim → returns wa.me link'],
+          [<Code>POST /api/consumer/withdraw/prepare</Code>, <Jwt />, 'External USDC withdrawal quote (fee, KYC, inventory)'],
+          [<Code>POST /api/consumer/withdraw/submit</Code>, <Jwt />, 'Passkey-authorised withdrawToExternal + fee retention'],
         ]} />
       </Section>
 
@@ -113,7 +115,7 @@ export default function Api() {
           [<Code>GET /api/admin/stats</Code>, <Pub />, 'Dashboard counts (feeds the public dashboard)'],
           [<Code>GET (Public) · POST·PATCH (Admin) /api/admin/countries, /currencies, /kyc-levels, /merchants, /products, /consumers</Code>, <Adm />, 'CRUD mirrors — reads public, writes admin (duplicate of system/merchants)'],
           [<Code>GET (Public) · writes (Admin) /api/admin/icons, /logos; /registration-fields (Admin)</Code>, <Adm />, 'Icon/logo/registration-field config'],
-          [<Code>GET /api/admin/reports/summary, /events, /transfers, /revenue</Code>, <Adm />, 'Indexed-event reporting'],
+          [<Code>GET /api/admin/reports/summary, /events, /transfers, /withdrawals, /revenue</Code>, <Adm />, 'Indexed-event reporting (+ Travel Rule withdrawals)'],
           [<Code>GET /api/admin/reports/conversion-fees</Code>, <Adm />, 'FX-spread revenue from ZAR→USD conversions (by currency)'],
           [<Code>GET /api/admin/reports/treasury</Code>, <Adm />, 'Treasury / reserve position report'],
         ]} />
@@ -142,9 +144,9 @@ export default function Api() {
           Services the backend talks to (outbound unless noted). The chain is reached via Alchemy RPC.
         </p>
         <Table head={['Service', 'Used for', 'Notes']} rows={[
-          ['Alchemy RPC (Sepolia + mainnet)', 'All on-chain reads/writes & the event indexer', 'Sepolia = pilot; mainnet = ENS + DEX pricing'],
+          ['Alchemy RPC (Sepolia + mainnet)', 'All on-chain reads/writes & the event indexer', 'Sepolia = pilot; mainnet = DEX pricing'],
           ['idOS', 'KYC profile + W3C credential issue/verify (register, recover)', <>Plus <Code>GET /idos</Code> which idOS reads <strong>inbound</strong>; pending issuer approval</>],
-          ['ENS (Ethereum mainnet)', 'Payment-tag subdomain registration & checks', 'MAINNET writes — real ETH'],
+          ['GNS / gwei.domains', 'Payment-tag subdomain registration & checks under imali.gwei', 'Follows CHAIN_ID (Sepolia in pilot)'],
           ['Pimlico (bundler + paymaster)', 'Gas sponsorship (registration whitelist)', 'Configured but dormant — relay model used today'],
           ['FX provider (ZimRate / open.er-api)', 'Live rates for /api/fx/rate', 'Cached; admin overrides fall back'],
           ['Uniswap V3 QuoterV2 (mainnet)', 'Asset pricing for /api/assets', 'Read-only eth_call, no transaction'],

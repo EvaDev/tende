@@ -122,7 +122,8 @@ export default function Concepts() {
           <Code>DEPLOYER_ADMIN_ADDRESS</Code> (or <Code>PLATFORM_TREASURY_ADDRESS</Code> if overridden) —
           the same wallet as the platform treasury. That includes harvested vault yield (swept as real
           tokens on <Code>harvest()</Code>), FX conversion spread (retained in the vault until realized),
-          and merchant settlement fees / swept TTZA. The backend signer never receives revenue; it only
+          and merchant settlement fees / swept TTZA, and consumer external-withdrawal fees retained as
+          USDC claims. The backend signer never receives revenue; it only
           pays gas. <span className="font-semibold text-gray-900">Gas:</span> in Phase 1 the backend
           signer relays transactions and pays ETH gas; Pimlico AA sponsorship is not live yet.
         </p>
@@ -162,6 +163,13 @@ export default function Concepts() {
           Consumer wallets are <strong>Safe smart accounts</strong> signed by a device passkey
           (P-256 / WebAuthn); a <strong>Pimlico</strong> bundler + paymaster sponsors gas. The platform owner’s
           two wallets are ordinary EOAs, not smart accounts.
+        </p>
+
+        <h4 className="font-semibold text-gray-900">GNS — Gwei Name Service</h4>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Payment tags are free subdomains under <Code>imali.gwei</Code> on{' '}
+          <a href="https://gwei.domains/" target="_blank" rel="noopener noreferrer" className="text-brand-accent underline">gwei.domains</a>
+          {' '}(e.g. <Code>se1.imali.gwei</Code>). The on-chain consumer registry stores a hash of the tag for privacy; plaintext resolution is off-chain via GNS. Payment tags use <Code>.gwei</Code> (GNS), not classic <Code>.eth</Code> names.
         </p>
 
         <h4 className="font-semibold text-gray-900">EIP-4361 — Sign-In with Ethereum</h4>

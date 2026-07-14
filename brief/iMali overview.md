@@ -44,11 +44,11 @@ Consumer Wallet
     * Local currency 
     * USD balance for $ savings. This $ stablecoin may earn yield, some of which can be shared with the 
 6. User can send to mobile number or  Account number. If that user does not already have an account on chain with us, we send them a WhatsApp link inviting them to sign up and register.
-7. ENS Subdomains: Privacy-preserving payment tags (hashed on-chain)
+7. GNS Subdomains: Privacy-preserving payment tags under imali.gwei (hashed on-chain)
 8. Transaction History: On-chain transaction tracking for purchases, top-ups, and transfers
 9. No PII stored on chain
 10. Passkey Authentication: Serverless, biometric-based login WebAuthn for secure, passwordless access
-11.Payment Tags: Human-readable payment addresses (ENS subdomains) for easy peer-to-peer transfers
+11.Payment Tags: Human-readable payment addresses (GNS subdomains under imali.gwei) for easy peer-to-peer transfers
 12. Enforce spend / wallet transfer amounts according to the KYC limits set in the system data database by the administrator (see KYC.jpg) 
 13. Aggregated balance is shown in the FIAT currency of the consumer's country currency eg see consumerUI.jpg
 

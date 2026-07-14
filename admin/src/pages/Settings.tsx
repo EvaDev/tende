@@ -384,6 +384,13 @@ export default function SettingsPage() {
             the platform retains it when paying out.
           </p>
         </div>
+        <div>
+          {configField('revenue.withdrawal_fee_bps', 'External USDC withdrawal fee (basis points)')}
+          <p className="text-xs text-gray-400 mt-1">
+            Deducted from consumer withdrawals to external wallets (e.g. MetaMask). Net USDC is sent
+            on-chain; the fee is retained as a platform USDC claim. 150 bps = 1.5%.
+          </p>
+        </div>
       </Card>}
 
       {/* ── Pilot config — only shown when config is loaded from DB ── */}

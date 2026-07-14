@@ -109,6 +109,67 @@ export async function executeTransfer(
   return signAndSubmitTransfer(prepared, onStep);
 }
 
+// ── External USDC withdrawal (unknown 0x / MetaMask) ─────────────────────────
+
+export interface TravelRuleBeneficiary {
+  fullName: string;
+  idNumber?: string;
+  phone?: string;
+  country?: string;
+  relationship?: string;
+}
+
+export interface PreparedWithdrawal {
+  withdrawalId: string;
+  challenge: string;
+  rpId: string;
+  to: string;
+  currency: 'USDC';
+  gross: string;
+  fee: string;
+  net: string;
+  feeBps: number;
+  warning: string;
+}
+
+export interface WithdrawResult {
+  success: boolean;
+  txHash: string;
+  to: string;
+  amount: string;
+  net: string;
+  fee: string;
+  currency: 'USDC';
+}
+
+export function prepareWithdraw(input: {
+  to: string;
+  amount: string;
+  beneficiary: TravelRuleBeneficiary;
+}): Promise<PreparedWithdrawal> {
+  return api.post<PreparedWithdrawal>('/consumer/withdraw/prepare', input);
+}
+
+export async function executeWithdraw(
+  input: { to: string; amount: string; beneficiary: TravelRuleBeneficiary },
+  onStep?: (step: TransferStep) => void,
+): Promise<WithdrawResult> {
+  onStep?.('prepare');
+  const prepared = await prepareWithdraw(input);
+  onStep?.('sign');
+  const assertion = await getPasskeyAssertion({ challenge: prepared.challenge, rpId: prepared.rpId });
+  onStep?.('relay');
+  const result = await api.post<WithdrawResult>('/consumer/withdraw/submit', {
+    withdrawalId: prepared.withdrawalId,
+    credentialId: assertion.credentialId,
+    authenticatorData: assertion.authenticatorData,
+    clientDataJSON: assertion.clientDataJSON,
+    signature: assertion.signature,
+  });
+  onStep?.('done');
+  return result;
+}
+
 // ── Escrow (always passkey — no session path for phone escrow yet) ────────────
 
 export interface EscrowPreparedTransfer {

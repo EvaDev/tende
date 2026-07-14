@@ -254,10 +254,20 @@ function DevKycPanel() {
 
 export default function Treasury() {
   const [info, setInfo] = useState<TreasuryInfo | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [loading, setLoading] = useState(true);
   const { isAdmin } = useRole();
 
   const load = useCallback(() => {
-    apiFetch<TreasuryInfo>('/api/admin/treasury').then(setInfo).catch(() => {});
+    setLoading(true);
+    setLoadError('');
+    apiFetch<TreasuryInfo>('/api/admin/treasury')
+      .then(setInfo)
+      .catch((e) => {
+        setInfo(null);
+        setLoadError(e instanceof Error ? e.message : 'Failed to load treasury');
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -268,7 +278,14 @@ export default function Treasury() {
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-semibold text-brand-accent">Treasury</h2>
-      {!info && <p className="text-white text-sm">Loading…</p>}
+      {loading && <p className="text-white text-sm">Loading…</p>}
+      {loadError && !loading && (
+        <p className="text-sm text-red-100 bg-red-900/40 border border-red-400/40 rounded-lg px-3 py-2">
+          {loadError === 'Session expired'
+            ? 'Connect the admin wallet to load treasury data, or enable Treasury under Settings → Public pages.'
+            : loadError}
+        </p>
+      )}
 
       {/* Data-driven supply table — new tokens appear automatically. Minted = the
           closed-loop treasury tokens we issue; Holdings = assets the platform owns
@@ -304,6 +321,11 @@ export default function Treasury() {
                   </tr>
                 );
               })}
+              {!loading && !loadError && (info?.supplies?.length ?? 0) === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-4 text-center text-gray-400">No treasury tokens registered yet.</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

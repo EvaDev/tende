@@ -96,7 +96,7 @@ WEB2 → MIGRATING → ONCHAIN
 A consumer enters `MIGRATING` when they opt into a feature requiring on-chain identity (USD savings, remittance). During migration: a new ERC4337 wallet is created, their web2 balance is swept to TTZA on-chain, and `legacy_consumer_id` is preserved for transaction history lookback. The web2 account is then deactivated. This is a one-way transition.
 
 ### `consumer_merchant_links`
-Mirrors `MerchantConsumer` from shared.cairo. The `source_id` is the merchant's internal customer ID (e.g. their loyalty card number). The `ens_subdomain` here is the relationship-specific payment tag.
+Mirrors `MerchantConsumer` from shared.cairo. The `source_id` is the merchant's internal customer ID (e.g. their loyalty card number). The `ens_subdomain` column holds the relationship-specific GNS payment tag (legacy column name).
 
 ---
 

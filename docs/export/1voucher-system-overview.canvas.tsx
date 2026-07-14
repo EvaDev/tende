@@ -109,7 +109,7 @@ const SLIDES: Slide[] = [
         rows={[
           ["Admin", "Countries, fiat currencies, treasury tokens, corridors, KYC tiers", "Which markets exist and which onchain tokens back them"],
           ["Merchant", "Business profile, wallet, settlement preference (fiat or onchain)", "Ability to receive consumer payments"],
-          ["Consumer", "Passkey, country, display name, optional ENS tag", "Personal Safe wallet + Vault balance claim"],
+          ["Consumer", "Passkey, country, display name, optional GNS tag", "Personal Safe wallet + Vault balance claim"],
         ]}
       />
     ),
@@ -155,7 +155,7 @@ const SLIDES: Slide[] = [
         <FlowStep n={1} title="Passkey created on device" detail="WebAuthn P-256 key — no seed phrase." />
         <FlowStep n={2} title="Backend resolves Safe signer" detail="SafeWebAuthnSignerFactory → deterministic signer address from pubKeyX/Y." />
         <FlowStep n={3} title="Consumer.registerConsumer onchain" detail="Deploys Safe proxy (threshold 1); stores country hash, name hash, KYC level 0 in Consumer contract." />
-        <FlowStep n={4} title="Off-chain profile (best-effort)" detail="idOS credential, ENS subdomain, Pimlico paymaster whitelist — wallet + DB row are the critical path." />
+        <FlowStep n={4} title="Off-chain profile (best-effort)" detail="idOS credential, GNS subdomain (.gwei), Pimlico paymaster whitelist — wallet + DB row are the critical path." />
         <FlowStep n={5} title="consumers row in Postgres" detail="Links wallet, country, KYC, registration step for retries." />
         <Text style={{ marginTop: 4 }}>
           Result: consumer has a gasless-capable Safe address registered onchain. Balance is still zero until cash-in.

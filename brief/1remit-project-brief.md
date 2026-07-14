@@ -327,7 +327,7 @@ Plus Bank launches ~next year as a SARB-licensed bank. Design now for compatibil
 ## 10. Current Build State
 
 ### Consumer.sol ✅
-- Safe wallet factory, consumer registration (ENS hash, name hash, country, KYC level)
+- Safe wallet factory, consumer registration (GNS tag hash, name hash, country, KYC level)
 - KYC management, spend limit checking (daily/monthly buckets)
 - Compliance remittance log (append-only), `recordRemittance()`
 - Roles: `REGISTRAR_ROLE`, `KYC_UPDATER_ROLE`, `RECORDER_ROLE`

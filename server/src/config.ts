@@ -99,9 +99,13 @@ export const config = {
   },
 
   ens: {
-    parentDomain:      optional('ENS_PARENT_DOMAIN', '1voucher.eth'),
+    // Gwei Name Service (https://gwei.domains) — parent e.g. imali.gwei
+    parentDomain:      optional('ENS_PARENT_DOMAIN', 'imali.gwei'),
     controllerAddress: optional('ENS_CONTROLLER_ADDRESS'),
     controllerKey:     optional('ENS_CONTROLLER_PRIVATE_KEY'),
+    // NameNFT — same CREATE address on mainnet and Sepolia
+    gnsContract:       optional('GNS_CONTRACT_ADDRESS', '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6'),
+    // Legacy ENS Public Resolver (unused by GNS; kept optional for older envs)
     resolverAddress:   optional('ENS_RESOLVER_ADDRESS'),
   },
 
@@ -179,9 +183,9 @@ export const config = {
   },
 } as const;
 
-// Validate ENS config is present when contracts are deployed
+// Validate GNS (.gwei) config is present when contracts are deployed
 if (config.contracts.consumer && !config.ens.controllerAddress) {
-  console.warn('[config] WARNING: CONSUMER_CONTRACT_ADDRESS is set but ENS_CONTROLLER_ADDRESS is not. ENS registration will fail.');
+  console.warn('[config] WARNING: CONSUMER_CONTRACT_ADDRESS is set but ENS_CONTROLLER_ADDRESS is not. .gwei subdomain registration will fail.');
 }
 
 if (config.idos.mode === 'stub') {

@@ -536,6 +536,8 @@ import { cashIn } from './cashInService.js';
 import { fxService } from './fxService.js';
 import { quoteMerchantCheckout, resolveMerchantCheckout } from './merchantCheckoutService.js';
 import { b64urlToBuf } from './webauthnService.js';
+import { assertKycSendAllowed, recordSpendEvent } from './kycSpendService.js';
+import { prepareWithdrawal, submitWithdrawal } from './withdrawalService.js';
 
 // Decimal places per currency for amount parsing.
 const CURRENCY_DECIMALS: Record<string, number> = { ZAR: 2, MWK: 2, USDC: 6 };
@@ -873,10 +875,30 @@ router.post('/transfer/prepare', async (req: Request, res: Response): Promise<vo
     ]);
     if (!senderRegistered) { res.status(403).json({ error: 'Your account is not registered yet', code: 'SENDER_UNREGISTERED' }); return; }
     if (!recipientRegistered && !recipientTrusted) {
+      const bareOx = /^0x[0-9a-fA-F]{40}$/.test(String(to).trim());
+      if (bareOx) {
+        res.status(409).json({
+          error: 'External wallet — withdraw USDC instead of an internal transfer',
+          code: 'EXTERNAL_WALLET',
+          requiresCurrency: 'USDC',
+        });
+        return;
+      }
       res.status(409).json({ error: 'Recipient is not registered yet. Send to escrow until they onboard.', code: 'RECIPIENT_UNVERIFIED' }); return;
     }
     if (balance < amountUnits) {
       res.status(409).json({ error: 'Insufficient balance', code: 'INSUFFICIENT_BALANCE' }); return;
+    }
+
+    const kyc = await assertKycSendAllowed({
+      consumerId: req.consumer!.consumerId,
+      walletAddress: senderWallet,
+      amountUnits,
+      currency: payCurrency,
+      spendType: saleCtx ? 'purchase' : 'p2p',
+    });
+    if (!kyc.ok) {
+      res.status(403).json({ error: kyc.error, code: kyc.code }); return;
     }
 
     sweepPending();
@@ -990,6 +1012,15 @@ router.post('/transfer/submit', async (req: Request, res: Response): Promise<voi
 
       pendingSessionTransfers.delete(transferId);
       await recordMerchantSale(pending, txHash);
+      await recordSpendEvent({
+        consumerId: req.consumer!.consumerId,
+        walletAddress: pending.senderWallet,
+        spendType: pending.sale ? 'purchase' : 'p2p',
+        currency: pending.currency,
+        amountUnits: pending.amount,
+        counterparty: pending.toAddress,
+        txHash,
+      });
       res.json({
         success: true, txHash, to: pending.toAddress,
         amount: pending.amount.toString(), currency: pending.currency,
@@ -1042,10 +1073,66 @@ router.post('/transfer/submit', async (req: Request, res: Response): Promise<voi
 
     pendingTransfers.delete(safeTxHash);
     await recordMerchantSale(pending, txHash);   // no-op unless this was a Buy-flow purchase
+    await recordSpendEvent({
+      consumerId: req.consumer!.consumerId,
+      walletAddress: pending.senderWallet,
+      spendType: pending.sale ? 'purchase' : (pending.recipientPhone ? 'escrow' : 'p2p'),
+      currency: pending.currency,
+      amountUnits: pending.amount,
+      counterparty: pending.toAddress,
+      txHash,
+    });
     res.json({ success: true, txHash, to: pending.toAddress, amount: pending.amount.toString(), currency: pending.currency });
   } catch (err) {
     console.error('[POST /api/consumer/transfer/submit]', err);
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── External USDC withdrawal (MetaMask / unknown 0x) ───────────────────────────
+// POST /api/consumer/withdraw/prepare  Body: { to, amount, beneficiary: { fullName, … } }
+router.post('/withdraw/prepare', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { to, amount, beneficiary } = req.body as {
+      to?: string; amount?: string; beneficiary?: unknown;
+    };
+    if (!to || !amount) { res.status(400).json({ error: 'Missing to or amount' }); return; }
+    const prepared = await prepareWithdrawal({
+      consumerId: req.consumer!.consumerId,
+      fromWallet: req.consumer!.walletAddress,
+      to,
+      amount: String(amount),
+      beneficiary,
+    });
+    res.json(prepared);
+  } catch (err) {
+    const e = err as Error & { status?: number; code?: string };
+    console.error('[POST /api/consumer/withdraw/prepare]', e.message);
+    res.status(e.status ?? 500).json({ error: e.message, code: e.code });
+  }
+});
+
+// POST /api/consumer/withdraw/submit
+router.post('/withdraw/submit', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { withdrawalId, credentialId, authenticatorData, clientDataJSON, signature } = req.body as Record<string, string>;
+    if (!withdrawalId || !credentialId || !authenticatorData || !clientDataJSON || !signature) {
+      res.status(400).json({ error: 'Missing signature fields' }); return;
+    }
+    const result = await submitWithdrawal({
+      consumerId: req.consumer!.consumerId,
+      fromWallet: req.consumer!.walletAddress,
+      withdrawalId,
+      credentialId,
+      authenticatorData,
+      clientDataJSON,
+      signature,
+    });
+    res.json(result);
+  } catch (err) {
+    const e = err as Error & { status?: number; code?: string };
+    console.error('[POST /api/consumer/withdraw/submit]', e.message);
+    res.status(e.status ?? 500).json({ error: e.message, code: e.code });
   }
 });
 
@@ -1104,6 +1191,17 @@ router.post('/transfer/escrow/prepare', async (req: Request, res: Response): Pro
     if (!senderRegistered) { res.status(403).json({ error: 'Your account is not registered yet', code: 'SENDER_UNREGISTERED' }); return; }
     if (balance < amountUnits) { res.status(409).json({ error: 'Insufficient balance', code: 'INSUFFICIENT_BALANCE' }); return; }
 
+    const kyc = await assertKycSendAllowed({
+      consumerId: req.consumer!.consumerId,
+      walletAddress: senderWallet,
+      amountUnits,
+      currency,
+      spendType: 'escrow',
+    });
+    if (!kyc.ok) {
+      res.status(403).json({ error: kyc.error, code: kyc.code }); return;
+    }
+
     const { safeTx, safeTxHash } = await buildVaultTransferSafeTx({
       safeAddress: senderWallet, toAddress: escrow, amount: amountUnits, currency,
     });
@@ -1147,6 +1245,16 @@ router.post('/transfer/escrow/submit', async (req: Request, res: Response): Prom
       amount: pending.amount, currency: pending.currency, escrowTx: txHash,
     });
     pendingTransfers.delete(body.safeTxHash);
+
+    await recordSpendEvent({
+      consumerId: req.consumer!.consumerId,
+      walletAddress: pending.senderWallet,
+      spendType: 'escrow',
+      currency: pending.currency,
+      amountUnits: pending.amount,
+      counterparty: pending.recipientPhone,
+      txHash,
+    });
 
     // Build the wa.me deep-link the sender taps to message the recipient.
     const claimUrl = `${config.webauthn.origin}/#/claim/${secret}`;
