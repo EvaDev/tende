@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ShoppingBag, QrCode, AlertCircle, CheckCircle2, X, Store, ChevronRight } from 'lucide-react';
+import { QrCode, AlertCircle, CheckCircle2, X, Store, ChevronRight } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import { QrScanner } from '@/components/QrScanner';
 import { executeTransfer, type TransferResult, type TransferStep } from '@/lib/pay';
 import { isPasskeySupported } from '@/lib/passkey';
 import { api } from '@/lib/api';
 import { getAppName } from '@/lib/brand';
-import PaymentProgress, { PAYMENT_STEPS } from '@/components/PaymentProgress';
+import PaymentProgress, { PURCHASE_STEPS } from '@/components/PaymentProgress';
 
 type PayLeg = 'SPEND' | 'ZAR' | 'USDC';
 
@@ -16,9 +16,25 @@ function legToCurrency(leg: PayLeg, spendCode: string): string {
   if (leg === 'ZAR') return 'ZAR';
   return spendCode;
 }
-const SYM: Record<string, string> = { ZAR: 'R', MWK: 'MK', USD: '$', USDC: '$' };
+const SYM: Record<string, string> = { ZAR: 'R', MWK: 'MK', MZN: 'MZN', USD: '$', USDC: '$' };
 const money = (n: number, c: string) =>
   `${SYM[c.toUpperCase()] ?? c}${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)}`;
+
+interface WalletBalances {
+  spendCode: string;
+  spend: number;
+  zar: number;
+  usd: number;
+}
+
+function balanceForPayCurrency(balances: WalletBalances | null, payCurrency: string): number | null {
+  if (!balances) return null;
+  const c = payCurrency.toUpperCase();
+  if (c === 'USDC' || c === 'USD') return balances.usd;
+  if (c === 'ZAR') return balances.zar;
+  if (c === balances.spendCode.toUpperCase()) return balances.spend;
+  return balances.spend;
+}
 
 interface LineItem { name: string; qty: number; unitPrice: number }
 interface CheckoutQuote {
@@ -43,7 +59,15 @@ interface CatalogProduct {
   id: string; name: string; description: string | null;
   deliveryType: string; isFixedPrice: boolean;
   price: number | null; minAmount: number | null; maxAmount: number | null;
-  currency: string; merchantId: string; merchantName: string; walletAddress: string;
+  currency: string; category: string | null; brand: string | null;
+  merchantId: string; merchantName: string; walletAddress: string;
+}
+
+interface MerchantCard {
+  merchantId: string;
+  merchantName: string;
+  walletAddress: string;
+  productCount: number;
 }
 
 const deliveryTag: Record<string, string> = {
@@ -57,16 +81,21 @@ function priceHint(p: CatalogProduct) {
   return '—';
 }
 
+type GroupBy = 'category' | 'brand';
+
 export default function Buy() {
   const navigate = useNavigate();
   const location = useLocation();
   const navState = location.state as { from?: PayLeg } | null;
   const [payFrom] = useState<PayLeg | null>(navState?.from ?? null);
   const [spendCode, setSpendCode] = useState('ZAR');
+  const [balances, setBalances]   = useState<WalletBalances | null>(null);
   const [scanning, setScanning]   = useState(false);
   const [charge, setCharge]       = useState<Charge | null>(null);
   const [catalog, setCatalog]     = useState<CatalogProduct[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
+  const [selectedMerchant, setSelectedMerchant] = useState<MerchantCard | null>(null);
+  const [groupBy, setGroupBy]     = useState<GroupBy>('category');
   const [picked, setPicked]       = useState<CatalogProduct | null>(null);
   const [amountInput, setAmountInput] = useState('');
   const [error, setError]         = useState('');
@@ -76,9 +105,58 @@ export default function Buy() {
   const [quote, setQuote]         = useState<CheckoutQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
 
+  const merchants = useMemo((): MerchantCard[] => {
+    const map = new Map<string, MerchantCard>();
+    for (const p of catalog) {
+      const cur = map.get(p.merchantId);
+      if (cur) cur.productCount += 1;
+      else map.set(p.merchantId, {
+        merchantId: p.merchantId,
+        merchantName: p.merchantName,
+        walletAddress: p.walletAddress,
+        productCount: 1,
+      });
+    }
+    return [...map.values()].sort((a, b) => a.merchantName.localeCompare(b.merchantName));
+  }, [catalog]);
+
+  const merchantProducts = useMemo(
+    () => selectedMerchant
+      ? catalog.filter(p => p.merchantId === selectedMerchant.merchantId)
+      : [],
+    [catalog, selectedMerchant],
+  );
+
+  const groupedProducts = useMemo(() => {
+    const groups = new Map<string, CatalogProduct[]>();
+    for (const p of merchantProducts) {
+      const key = (groupBy === 'brand' ? p.brand : p.category) || 'Other';
+      const list = groups.get(key) ?? [];
+      list.push(p);
+      groups.set(key, list);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [merchantProducts, groupBy]);
+
   useEffect(() => {
-    api.get<{ summary: { spend?: { currency: string } } }>('/consumer/balance')
-      .then(b => setSpendCode(b.summary?.spend?.currency ?? 'ZAR'))
+    api.get<{
+      summary: {
+        localCurrency?: string;
+        spend?: { currency: string; formatted: string };
+        zar?: { formatted: string };
+        usd?: { formatted: string };
+      };
+    }>('/consumer/balance')
+      .then(b => {
+        const spendCur = b.summary?.spend?.currency ?? b.summary?.localCurrency ?? 'ZAR';
+        setSpendCode(spendCur);
+        setBalances({
+          spendCode: spendCur,
+          spend: parseFloat(b.summary?.spend?.formatted ?? '0') || 0,
+          zar: parseFloat(b.summary?.zar?.formatted ?? '0') || 0,
+          usd: parseFloat(b.summary?.usd?.formatted ?? '0') || 0,
+        });
+      })
       .catch(() => {});
   }, []);
 
@@ -178,6 +256,13 @@ export default function Buy() {
       return;
     }
 
+    const need = parseFloat(payAmount);
+    const have = balanceForPayCurrency(balances, payCurrency);
+    if (have != null && need > have + 1e-9) {
+      setError('You don’t have enough balance for this purchase.');
+      return;
+    }
+
     setLoading(true); setError(''); setPayStep('prepare');
     try {
       setResult(await executeTransfer({
@@ -207,6 +292,8 @@ export default function Buy() {
   if (result) {
     const paidCur = quote?.crossBorder ? quote.payCurrency : charge?.currency ?? 'ZAR';
     const paidAmt = quote?.crossBorder ? quote.payAmount : charge?.amount ?? '0';
+    const refunded = result.fulfilmentStatus === 'refunded';
+    const pending = result.fulfilmentPending || result.fulfilmentStatus === 'pending_fulfilment';
     return (
       <div className="min-h-dvh flex items-center justify-center px-6 bg-brand-bg">
         <div className="w-full max-w-sm bg-brand-card rounded-2xl p-6 shadow-xl text-center space-y-4">
@@ -215,14 +302,30 @@ export default function Buy() {
           </div>
           <div className="space-y-1">
             <h2 className="text-xl font-bold text-brand-accent">
-              Paid {money(parseFloat(paidAmt), paidCur)}
+              {refunded
+                ? `Refunded ${money(parseFloat(paidAmt), paidCur)}`
+                : pending
+                  ? 'Payment held'
+                  : `Paid ${money(parseFloat(paidAmt), paidCur)}`}
             </h2>
-            {quote?.crossBorder && charge && (
+            {refunded ? (
               <p className="text-brand-accent/70 text-sm">
-                Cash value {money(parseFloat(charge.amount), charge.currency)}
+                Fulfilment failed — funds have been returned to you.
               </p>
+            ) : pending ? (
+              <p className="text-brand-accent/70 text-sm">
+                {money(parseFloat(paidAmt), paidCur)} is still in escrow awaiting fulfilment.
+              </p>
+            ) : (
+              <>
+                {quote?.crossBorder && charge && (
+                  <p className="text-brand-accent/70 text-sm">
+                    Cash value {money(parseFloat(charge.amount), charge.currency)}
+                  </p>
+                )}
+                <p className="text-brand-accent/70 text-sm">to {charge?.merchant}</p>
+              </>
             )}
-            <p className="text-brand-accent/70 text-sm">to {charge?.merchant}</p>
             <a href={`https://sepolia.etherscan.io/tx/${result.txHash}`} target="_blank" rel="noreferrer" className="text-brand-accent text-xs font-mono underline break-all">
               {result.txHash.slice(0, 10)}…{result.txHash.slice(-8)}
             </a>
@@ -237,7 +340,12 @@ export default function Buy() {
     return (
       <div className="min-h-dvh flex items-center justify-center px-6 bg-brand-bg">
         <div className="w-full max-w-sm bg-brand-card rounded-2xl p-5 shadow-xl">
-          <PaymentProgress steps={PAYMENT_STEPS} currentId={payStep} title="Processing payment" />
+          <PaymentProgress
+            steps={PURCHASE_STEPS}
+            currentId={payStep}
+            title="Processing purchase"
+            hint="Funds go to escrow while fulfilment runs (~30 seconds)."
+          />
         </div>
       </div>
     );
@@ -248,6 +356,10 @@ export default function Buy() {
     const crossBorder = quote?.crossBorder ?? false;
     const payTotal = crossBorder ? parseFloat(quote!.payAmount) : chargeTotal;
     const payCur = crossBorder ? quote!.payCurrency : charge.currency;
+    const available = balanceForPayCurrency(balances, payCur);
+    const insufficient = available != null && !quoteLoading && !(charge.merchantId != null && !quote)
+      && payTotal > available + 1e-9;
+    const payBlocked = loading || quoteLoading || (charge.merchantId != null && !quote) || insufficient;
 
     return (
       <div className="min-h-dvh flex items-center justify-center px-6 bg-brand-bg">
@@ -280,6 +392,11 @@ export default function Buy() {
                 Paying from {payFrom === 'USDC' ? 'USD' : payFrom === 'ZAR' ? 'Rand' : spendCode} wallet
               </p>
             )}
+            {available != null && (
+              <p className="text-xs text-brand-accent/50">
+                Available {money(available, payCur)}
+              </p>
+            )}
           </div>
           {quoteLoading && (
             <p className="text-center text-sm text-brand-accent/60">Loading rate…</p>
@@ -294,12 +411,17 @@ export default function Buy() {
               ))}
             </div>
           )}
-          {error && (
+          {(error || insufficient) && (
             <div className="flex items-start gap-2 bg-brand-danger/10 border border-brand-danger/30 rounded-xl px-3 py-2 text-brand-danger text-sm">
-              <AlertCircle size={16} className="shrink-0 mt-0.5" /> {error}
+              <AlertCircle size={16} className="shrink-0 mt-0.5" />
+              {error || 'You don’t have enough balance for this purchase.'}
             </div>
           )}
-          <button onClick={pay} disabled={loading || quoteLoading || (charge.merchantId != null && !quote)} className="w-full py-3.5 rounded-2xl bg-brand-accent text-brand-text font-semibold active:scale-95 transition-transform disabled:opacity-40">
+          <button
+            onClick={pay}
+            disabled={payBlocked}
+            className="w-full py-3.5 rounded-2xl bg-brand-accent text-brand-text font-semibold active:scale-95 transition-transform disabled:opacity-40"
+          >
             {loading ? 'Paying…' : `Pay ${money(payTotal, payCur)}`}
           </button>
         </div>
@@ -313,7 +435,11 @@ export default function Buy() {
       <div className="min-h-dvh flex flex-col px-6 pt-14 pb-24 bg-brand-bg">
         <button onClick={() => { setPicked(null); setError(''); }} className="text-white/80 text-sm mb-4 self-start">← Back</button>
         <h1 className="text-2xl font-bold text-white mb-1">{picked.name}</h1>
-        <p className="text-white/70 text-sm mb-6">{picked.merchantName}</p>
+        <p className="text-white/70 text-sm mb-6">
+          {picked.merchantName}
+          {picked.brand ? ` · ${picked.brand}` : ''}
+          {picked.category ? ` · ${picked.category}` : ''}
+        </p>
         <div className="bg-brand-accent rounded-2xl p-5 space-y-4 text-white">
           {picked.isFixedPrice ? (
             <p className="text-2xl font-bold text-white">{priceHint(picked)}</p>
@@ -345,11 +471,81 @@ export default function Buy() {
     );
   }
 
+  if (selectedMerchant) {
+    return (
+      <div className="flex flex-col min-h-dvh pb-24 px-6 pt-14 bg-brand-bg">
+        <button
+          onClick={() => { setSelectedMerchant(null); setError(''); }}
+          className="text-white/80 text-sm mb-4 self-start"
+        >
+          ← All merchants
+        </button>
+        <h1 className="text-3xl font-bold text-white mb-1">{selectedMerchant.merchantName}</h1>
+        <p className="text-white/70 text-sm mb-4">
+          {selectedMerchant.productCount} product{selectedMerchant.productCount === 1 ? '' : 's'}
+        </p>
+
+        <div className="flex gap-2 mb-4">
+          {(['category', 'brand'] as GroupBy[]).map(g => (
+            <button
+              key={g}
+              type="button"
+              onClick={() => setGroupBy(g)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium capitalize ${
+                groupBy === g ? 'bg-brand-accent text-white' : 'bg-white/10 text-white/70'
+              }`}
+            >
+              By {g}
+            </button>
+          ))}
+        </div>
+
+        {groupedProducts.length === 0 ? (
+          <p className="text-white/60 text-sm">No products from this merchant.</p>
+        ) : (
+          <div className="space-y-5">
+            {groupedProducts.map(([group, products]) => (
+              <div key={group}>
+                <h3 className="text-white/80 text-xs font-semibold uppercase tracking-wide mb-2">{group}</h3>
+                <div className="space-y-2">
+                  {products.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => pickProduct(p)}
+                      className="w-full flex items-center gap-3 bg-brand-accent rounded-2xl px-4 py-4 text-left text-white active:scale-[0.98] transition-transform"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-white truncate">{p.name}</p>
+                        {(groupBy === 'category' ? p.brand : p.category) && (
+                          <p className="text-xs text-white/70 truncate">
+                            {groupBy === 'category' ? p.brand : p.category}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-bold text-white tabular-nums">{priceHint(p)}</p>
+                        {deliveryTag[p.deliveryType] && (
+                          <p className="text-[10px] uppercase tracking-wide text-white/60">{deliveryTag[p.deliveryType]}</p>
+                        )}
+                      </div>
+                      <ChevronRight size={18} className="text-white/50 shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <BottomNav />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col min-h-dvh pb-24 px-6 pt-14 bg-brand-bg">
       {scanning && <QrScanner onResult={onScan} onClose={() => setScanning(false)} />}
       <h1 className="text-3xl font-bold text-white mb-2">Buy</h1>
-      <p className="text-white/80 text-sm mb-6">Pay a merchant in store, or buy from a product in your country.</p>
+      <p className="text-white/80 text-sm mb-6">Pay a merchant in store, or choose a merchant to browse products.</p>
 
       <button
         onClick={() => { setError(''); setScanning(true); }}
@@ -365,30 +561,26 @@ export default function Buy() {
       )}
 
       <h2 className="text-white font-semibold mb-3 flex items-center gap-2">
-        <Store size={18} /> Products near you
+        <Store size={18} /> Merchants near you
       </h2>
 
       {catalogLoading ? (
-        <p className="text-white/60 text-sm">Loading products…</p>
-      ) : catalog.length === 0 ? (
-        <p className="text-white/60 text-sm">No mobile or delivery products available in your country yet.</p>
+        <p className="text-white/60 text-sm">Loading merchants…</p>
+      ) : merchants.length === 0 ? (
+        <p className="text-white/60 text-sm">No products available in your country yet.</p>
       ) : (
         <div className="space-y-2">
-          {catalog.map(p => (
+          {merchants.map(m => (
             <button
-              key={p.id}
-              onClick={() => pickProduct(p)}
+              key={m.merchantId}
+              onClick={() => setSelectedMerchant(m)}
               className="w-full flex items-center gap-3 bg-brand-accent rounded-2xl px-4 py-4 text-left text-white active:scale-[0.98] transition-transform"
             >
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-white truncate">{p.name}</p>
-                <p className="text-xs text-white/70 truncate">{p.merchantName}</p>
-              </div>
-              <div className="text-right shrink-0">
-                <p className="text-sm font-bold text-white tabular-nums">{priceHint(p)}</p>
-                {deliveryTag[p.deliveryType] && (
-                  <p className="text-[10px] uppercase tracking-wide text-white/60">{deliveryTag[p.deliveryType]}</p>
-                )}
+                <p className="font-semibold text-white truncate">{m.merchantName}</p>
+                <p className="text-xs text-white/70">
+                  {m.productCount} product{m.productCount === 1 ? '' : 's'}
+                </p>
               </div>
               <ChevronRight size={18} className="text-white/50 shrink-0" />
             </button>

@@ -107,6 +107,11 @@ export default function Account() {
                 {profile?.kyc.allowsUsdSavings ? '✓' : '✗'} USD Savings
               </div>
             </div>
+            <p className="text-xs text-white/60 leading-relaxed">
+              Higher verification unlocks remittance and USD savings. Self-serve upgrade isn’t available yet —
+              an operator sets your level in Admin → <span className="text-white/90">Treasury → Set KYC Level</span>
+              (POC / when Dev tools are on).
+            </p>
           </div>
 
           <button

@@ -23,21 +23,25 @@ import { registerMerchantOnchain, type MerchantOnchainResult } from './treasuryS
 import { ensureHeadOfficeStore } from './storeService.js';
 import { SQL_STORE_LABEL, SQL_TILL_LABEL } from './salesLabels.js';
 import { getAcceptedCurrencies, seedAcceptedCurrency } from './merchantAcceptedCurrencies.js';
+import { ensureOwnerOrgAdminSeat } from './merchantOwnerBootstrap.js';
 
 const router = express.Router();
 
 // ── POST /api/merchants/register ──────────────────────────────────────────────
 // Self-service merchant onboarding. A new wallet proves ownership via a signed
 // nonce (GET /api/auth/nonce first), submits KYB details (not verified yet), and
-// receives a merchant JWT. Country defaults from the client; the wallet is the
-// connected wallet. verification_status stays PENDING.
+// receives a merchant JWT + an org_admin Invite ID for the merchant app passkey.
+// Country defaults from the client; the wallet is the connected wallet.
+// verification_status stays PENDING.
+//
+// If this wallet is already a merchant but has no org_admin seat yet (admin-created
+// row), we seed an invited org_admin and return memberId so the owner can claim
+// without re-registering the business.
 router.post('/register', async (req: Request, res: Response): Promise<void> => {
   const { walletAddress, signature, name, email, address, contactPerson, settlementType, countryCode, iconId } =
     req.body as Record<string, string>;
 
   if (!walletAddress || !signature) { res.status(400).json({ error: 'walletAddress and signature required' }); return; }
-  if (!name || !countryCode || !settlementType) { res.status(400).json({ error: 'name, countryCode and settlementType required' }); return; }
-  if (!['FIAT', 'ONCHAIN'].includes(settlementType)) { res.status(400).json({ error: 'settlementType must be FIAT or ONCHAIN' }); return; }
 
   const wallet = walletAddress.toLowerCase();
   if (!verifyAndConsume(wallet, signature)) {
@@ -46,8 +50,49 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    const existing = await db.query(`SELECT merchant_id FROM merchants WHERE LOWER(wallet_address) = $1`, [wallet]);
-    if (existing.rows.length) { res.status(409).json({ error: 'This wallet is already registered as a merchant.' }); return; }
+    const existing = await db.query<{ merchant_id: string; name: string; country_code: string; verification_status: string }>(
+      `SELECT merchant_id, name, country_code, verification_status
+         FROM merchants WHERE LOWER(wallet_address) = $1`,
+      [wallet],
+    );
+
+    if (existing.rows.length) {
+      const merchant = existing.rows[0];
+      const seat = await ensureOwnerOrgAdminSeat(merchant.merchant_id, {
+        email: email ?? null,
+        displayName: contactPerson ?? null,
+      });
+      if (seat.status === 'active') {
+        res.status(409).json({
+          error: 'This wallet is already a registered merchant. Sign in with your passkey.',
+          code: 'ALREADY_REGISTERED',
+          merchantId: merchant.merchant_id,
+        });
+        return;
+      }
+      // Wallet is a merchant but owner seat is still invited — hand back memberId to claim.
+      const token = jwt.sign(
+        { sub: wallet, consumerId: merchant.merchant_id, countryCode: merchant.country_code, kycLevel: 0, role: 'merchant' },
+        config.jwt.secret,
+        { expiresIn: config.jwt.expiresIn as jwt.SignOptions['expiresIn'] },
+      );
+      res.status(200).json({
+        token, role: 'merchant', merchant,
+        memberId: seat.memberId,
+        memberStatus: seat.status,
+        bootstrapped: true,
+      });
+      return;
+    }
+
+    if (!name || !countryCode || !settlementType) {
+      res.status(400).json({ error: 'name, countryCode and settlementType required' });
+      return;
+    }
+    if (!['FIAT', 'ONCHAIN'].includes(settlementType)) {
+      res.status(400).json({ error: 'settlementType must be FIAT or ONCHAIN' });
+      return;
+    }
 
     const cc = await db.query<{ currency_code: string }>(
       `SELECT currency_code FROM countries WHERE country_code = $1`, [countryCode.toUpperCase()]);
@@ -64,16 +109,14 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
     );
     const merchant = r.rows[0];
 
-    // A merchant accepts its own local currency by default. Admins can add more
-    // (e.g. ZAR, for cross-border voucher acceptance) via the accepted-currencies
-    // endpoint. Best-effort — tolerate the table not existing yet (migration 013).
     await seedAcceptedCurrency(merchant.merchant_id, currency);
+    await ensureHeadOfficeStore(merchant.merchant_id);
 
-    // Register the merchant on-chain so consumers can pay it: whitelisted on the
-    // country's TreasuryToken (local TT) and a trusted counterparty on the Vault
-    // (USDC / unified balances). Best-effort: a chain/RPC failure must not fail KYB
-    // signup — each leg's outcome is surfaced in `onchain` so a failed leg can be
-    // retried (POST /api/merchants/:id/whitelist) once resolved.
+    const seat = await ensureOwnerOrgAdminSeat(merchant.merchant_id, {
+      email: email ?? null,
+      displayName: contactPerson ?? name,
+    });
+
     const onchain = await registerMerchantOnchain(wallet, countryCode);
     if (!onchain.treasury.whitelisted || !onchain.vault.whitelisted) {
       console.warn(`[merchant/register] on-chain registration partial for ${wallet}:`, JSON.stringify(onchain));
@@ -84,7 +127,11 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
       config.jwt.secret,
       { expiresIn: config.jwt.expiresIn as jwt.SignOptions['expiresIn'] },
     );
-    res.status(201).json({ token, role: 'merchant', merchant, onchain });
+    res.status(201).json({
+      token, role: 'merchant', merchant, onchain,
+      memberId: seat.memberId,
+      memberStatus: seat.status,
+    });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === '23505') { res.status(409).json({ error: 'Wallet already registered' }); return; }
     res.status(500).json({ error: (err as Error).message });
@@ -415,6 +462,12 @@ router.post('/', requireAdmin, async (req: import('express').Request, res: impor
 
     await seedAcceptedCurrency(merchant.merchant_id, merchant.currency_code);
     await ensureHeadOfficeStore(merchant.merchant_id);
+    const seat = merchant.wallet_address
+      ? await ensureOwnerOrgAdminSeat(merchant.merchant_id, {
+          email: email ?? null,
+          displayName: name ?? null,
+        })
+      : null;
 
     // Mirror the self-service flow: register the merchant on-chain (TreasuryToken
     // whitelist + Vault trusted counterparty). Best-effort; never fails the create.
@@ -422,7 +475,7 @@ router.post('/', requireAdmin, async (req: import('express').Request, res: impor
     if (merchant.wallet_address) {
       onchain = await registerMerchantOnchain(merchant.wallet_address, merchant.country_code);
     }
-    res.status(201).json({ ...merchant, onchain });
+    res.status(201).json({ ...merchant, onchain, memberId: seat?.memberId ?? null });
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === '23505') res.status(409).json({ error: 'Wallet address already registered' });
     res.status(500).json({ error: (err as Error).message });

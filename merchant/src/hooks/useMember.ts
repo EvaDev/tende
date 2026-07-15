@@ -6,6 +6,7 @@ export interface MemberProfile {
   memberId: number;
   merchantId: string;
   merchantName: string;
+  countryCode: string;
   email: string | null;
   displayName: string | null;
   role: 'org_admin' | 'store_manager' | 'cashier';

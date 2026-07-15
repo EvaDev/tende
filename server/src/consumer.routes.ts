@@ -82,7 +82,7 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
 
 // ── GET /api/consumer/products ────────────────────────────────────────────────
 // Browseable catalogue for the Buy screen: active products from active merchants
-// in the consumer's country. In-person (DIRECT) products are POS-only — excluded.
+// in the consumer's country. In-person (DIRECT) products stay POS-only.
 router.get('/products', async (req: Request, res: Response): Promise<void> => {
   try {
     const cRes = await db.query<{ country_code: string }>(
@@ -93,13 +93,14 @@ router.get('/products', async (req: Request, res: Response): Promise<void> => {
     const r = await db.query(
       `SELECT p.product_id AS id, p.name, p.description, p.delivery_type,
               p.is_fixed_price, p.price, p.min_price, p.max_price, p.currency_code,
+              p.category, p.brand,
               m.merchant_id, m.name AS merchant_name, m.wallet_address
          FROM products p
          JOIN merchants m ON m.merchant_id = p.merchant_id
         WHERE p.is_active = TRUE AND m.is_active = TRUE
           AND p.country_code = $1
-          AND p.delivery_type NOT IN ('DIRECT', 'VOUCHER')
-        ORDER BY m.name, p.name`,
+          AND p.delivery_type <> 'DIRECT'
+        ORDER BY m.name, p.category NULLS LAST, p.brand NULLS LAST, p.name`,
       [country],
     );
 
@@ -113,12 +114,48 @@ router.get('/products', async (req: Request, res: Response): Promise<void> => {
       minAmount: fromMinorUnits(row.min_price as string | null),
       maxAmount: fromMinorUnits(row.max_price as string | null),
       currency: row.currency_code,
+      category: row.category ?? null,
+      brand: row.brand ?? null,
       merchantId: row.merchant_id,
       merchantName: row.merchant_name,
       walletAddress: row.wallet_address,
     })));
   } catch (err) {
     console.error('[GET /api/consumer/products]', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── GET /api/consumer/purchases/:saleId ───────────────────────────────────────
+// Poll escrow fulfilment outcome for a purchase the consumer just made.
+router.get('/purchases/:saleId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const saleId = String(req.params.saleId);
+    const r = await db.query<{
+      sale_id: string; status: string; fulfilment_status: string | null;
+      fulfilment_error: string | null; amount: string; currency: string;
+      merchant_name: string | null;
+    }>(
+      `SELECT s.sale_id::text, s.status, s.fulfilment_status, s.fulfilment_error,
+              s.amount::text, s.currency, m.name AS merchant_name
+         FROM merchant_sales s
+         LEFT JOIN merchants m ON m.merchant_id = s.merchant_id
+        WHERE s.sale_id = $1 AND LOWER(s.consumer_wallet) = LOWER($2)`,
+      [saleId, req.consumer!.walletAddress],
+    );
+    if (!r.rows.length) { res.status(404).json({ error: 'Purchase not found' }); return; }
+    const s = r.rows[0];
+    res.json({
+      saleId: s.sale_id,
+      status: s.status,
+      fulfilmentStatus: s.fulfilment_status,
+      fulfilmentError: s.fulfilment_error,
+      amount: s.amount,
+      currency: s.currency,
+      merchantName: s.merchant_name,
+    });
+  } catch (err) {
+    console.error('[GET /api/consumer/purchases/:saleId]', err);
     res.status(500).json({ error: (err as Error).message });
   }
 });
@@ -277,9 +314,14 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
         `SELECT reference, kind, source, credit_tx FROM deposit_references WHERE LOWER(wallet) = $1`, [w]),
       db.query<{ from_currency: string; to_currency: string; from_amount: string; to_amount: string; rate: string; spread_bps: number; fee_amount: string; fee_currency: string; reference: string | null; debit_tx: string | null; credit_tx: string | null }>(
         `SELECT from_currency, to_currency, from_amount, to_amount, rate, spread_bps, fee_amount, fee_currency, reference, debit_tx, credit_tx FROM consumer_conversions WHERE LOWER(wallet) = $1`, [w]),
-      db.query<{ sale_id: number; tx_hash: string | null; amount: string; currency: string; created_at: string; store_number: string | null; till_number: string | null; items: unknown; merchant_name: string | null }>(
-        `SELECT s.sale_id, s.tx_hash, s.amount, s.currency, s.created_at,
-                s.store_number, s.till_number, s.items, m.name AS merchant_name
+      db.query<{
+        sale_id: number; tx_hash: string | null; escrow_tx: string | null; amount: string; currency: string;
+        created_at: string; store_number: string | null; till_number: string | null; items: unknown;
+        merchant_name: string | null; status: string; fulfilment_status: string | null;
+      }>(
+        `SELECT s.sale_id, s.tx_hash, s.escrow_tx, s.amount, s.currency, s.created_at,
+                s.store_number, s.till_number, s.items, s.status, s.fulfilment_status,
+                m.name AS merchant_name
            FROM merchant_sales s LEFT JOIN merchants m ON m.merchant_id = s.merchant_id
           WHERE LOWER(s.consumer_wallet) = $1
           ORDER BY s.created_at DESC
@@ -296,7 +338,11 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
     const refByTx = new Map(refsRes.rows.filter(r => r.credit_tx).map(r => [r.credit_tx!.toLowerCase(), r]));
     const convByCreditTx = new Map(convRes.rows.filter(c => c.credit_tx).map(c => [c.credit_tx!.toLowerCase(), c]));
     const convDebitTxs = new Set(convRes.rows.filter(c => c.debit_tx).map(c => c.debit_tx!.toLowerCase()));
-    const saleByTx = new Map(salesRes.rows.filter(s => s.tx_hash).map(s => [s.tx_hash!.toLowerCase(), s]));
+    const saleByTx = new Map<string, typeof salesRes.rows[0]>();
+    for (const s of salesRes.rows) {
+      if (s.tx_hash) saleByTx.set(s.tx_hash.toLowerCase(), s);
+      if (s.escrow_tx) saleByTx.set(s.escrow_tx.toLowerCase(), s);
+    }
     const changeByTx = new Map(changeRes.rows.filter(c => c.credit_tx).map(c => [c.credit_tx!.toLowerCase(), c]));
 
     interface Tx {
@@ -365,37 +411,42 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
         event_type = direction === 'out' ? 'Sent' : 'Received';
       }
 
-      // A transfer out that matches a recorded POS purchase → show it as a Purchase
-      // with the merchant, store/till and line items.
+      // A transfer out that matches a recorded POS / product purchase → Purchase
+      // (funds may be held at escrow; match on tx_hash or escrow_tx).
       const sale = saleByTx.get(txh);
       if (sale && direction === 'out') {
-        event_type = 'Purchase';
+        const pending = sale.status === 'pending_fulfilment';
+        const refunded = sale.status === 'refunded';
+        event_type = refunded ? 'Purchase refunded' : pending ? 'Purchase (fulfilling)' : 'Purchase';
         detail = {
           type: 'purchase',
           merchant: sale.merchant_name ?? 'Merchant',
           store: sale.store_number ?? undefined,
           till:  sale.till_number ?? undefined,
           items: Array.isArray(sale.items) ? sale.items : undefined,
+          status: sale.status,
+          fulfilmentStatus: sale.fulfilment_status ?? undefined,
         };
       }
       transactions.push({ event_id: String(r.id), event_type, amount_token, currency: cur.sym, created_at: r.ts, tx_hash: r.tx_hash, direction, detail });
     }
 
     // Purchases recorded in merchant_sales before the indexer catches up (or if the
-    // indexer started forward-only and missed a block). Dedupe by tx_hash.
+    // indexer started forward-only and missed a block). Dedupe by tx_hash / escrow_tx.
     const seenTx = new Set(transactions.map(t => t.tx_hash.toLowerCase()));
     for (const sale of salesRes.rows) {
-      if (!sale.tx_hash) continue;
-      const txh = sale.tx_hash.toLowerCase();
-      if (seenTx.has(txh)) continue;
+      const txh = (sale.tx_hash ?? sale.escrow_tx)?.toLowerCase();
+      if (!txh || seenTx.has(txh)) continue;
       seenTx.add(txh);
+      const pending = sale.status === 'pending_fulfilment';
+      const refunded = sale.status === 'refunded';
       transactions.push({
         event_id:    `sale-${sale.sale_id}`,
-        event_type:  'Purchase',
+        event_type:  refunded ? 'Purchase refunded' : pending ? 'Purchase (fulfilling)' : 'Purchase',
         amount_token: Number(sale.amount).toFixed(2),
         currency:    sale.currency?.toUpperCase() ?? 'ZAR',
         created_at:  sale.created_at,
-        tx_hash:     sale.tx_hash,
+        tx_hash:     sale.tx_hash ?? sale.escrow_tx ?? '',
         direction:   'out',
         detail: {
           type: 'purchase',
@@ -403,6 +454,8 @@ router.get('/transactions', async (req: Request, res: Response): Promise<void> =
           store: sale.store_number ?? undefined,
           till:  sale.till_number ?? undefined,
           items: Array.isArray(sale.items) ? sale.items : undefined,
+          status: sale.status,
+          fulfilmentStatus: sale.fulfilment_status ?? undefined,
         },
       });
     }
@@ -532,6 +585,7 @@ import {
 } from './sessionService.js';
 import { getOnChainSession } from './safeRelayService.js';
 import { createClaim, escrowAddress } from './escrowService.js';
+import { enqueueSaleFulfilment, resolveFulfilmentUrl } from './fulfilmentService.js';
 import { cashIn } from './cashInService.js';
 import { fxService } from './fxService.js';
 import { quoteMerchantCheckout, resolveMerchantCheckout } from './merchantCheckoutService.js';
@@ -550,9 +604,11 @@ function decimalsFor(currency: string): number {
 const PENDING_TTL_MS = 5 * 60 * 1000;
 
 // Optional merchant-purchase context attached to a transfer from the Buy flow. When
-// present, transfer/submit records a merchant_sales row on success.
+// present, transfer routes payment to platform escrow and records a merchant_sales
+// row; fulfilment then releases to the merchant or refunds the consumer.
 interface SaleContext {
   merchantId?: string;
+  merchantWallet?: string;   // resolved at prepare — destination after fulfilment
   productId?: string;
   storeId?: string;
   storeNumber?: string;
@@ -565,6 +621,8 @@ interface SaleContext {
   fxRate?: number;
   fxSource?: string;
   fxAsOf?: string | null;
+  fulfilmentUrl?: string;
+  escrowHold?: boolean;
 }
 interface PendingTransfer {
   safeTx: SafeTx; senderWallet: string; toAddress: string;
@@ -588,13 +646,14 @@ function sweepPending() {
 // Record a completed POS purchase in the merchant sales ledger. Best-effort: the
 // on-chain payment has already settled, so a bookkeeping failure here must never
 // fail the request — it's logged and swallowed.
-async function recordMerchantSale(pending: { toAddress: string; senderWallet: string; amount: bigint; currency: string; sale?: SaleContext }, txHash: string): Promise<void> {
+async function recordMerchantSale(
+  pending: { toAddress: string; senderWallet: string; amount: bigint; currency: string; sale?: SaleContext },
+  txHash: string,
+): Promise<{ saleId?: string; fulfilmentPending?: boolean } | void> {
   const sale = pending.sale;
   if (!sale) return;
   try {
-    const merchantWallet = pending.toAddress;
-    // Resolve merchant_id (trust the wallet the payment actually went to over the
-    // client-supplied id) and the payer's @tag for readable reporting.
+    const merchantWallet = sale.merchantWallet ?? pending.toAddress;
     const [mRes, cRes] = await Promise.all([
       db.query<{ merchant_id: string }>(
         `SELECT merchant_id FROM merchants WHERE LOWER(wallet_address) = LOWER($1)`, [merchantWallet]),
@@ -609,13 +668,18 @@ async function recordMerchantSale(pending: { toAddress: string; senderWallet: st
       : null;
 
     const { store, till } = resolveStoreTill(sale.storeNumber, sale.tillNumber);
+    const escrowHold = sale.escrowHold !== false; // default on for purchases
+    const status = escrowHold ? 'pending_fulfilment' : 'paid';
+    const fulfilmentUrl = sale.fulfilmentUrl ?? null;
 
-    await db.query(
+    const inserted = await db.query<{ sale_id: string }>(
       `INSERT INTO merchant_sales
          (merchant_id, merchant_wallet, consumer_wallet, consumer_tag, amount, currency,
           charge_amount, charge_currency, fx_rate, fx_source,
-          store_id, store_number, till_number, latitude, longitude, items, tx_hash, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'paid')`,
+          store_id, store_number, till_number, latitude, longitude, items,
+          tx_hash, escrow_tx, status, fulfilment_url, fulfilment_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+       RETURNING sale_id::text`,
       [merchantId, merchantWallet, pending.senderWallet, consumerTag, amountMajor,
        pending.currency.toUpperCase(),
        sale.chargeAmount != null ? Number(sale.chargeAmount) : null,
@@ -624,8 +688,19 @@ async function recordMerchantSale(pending: { toAddress: string; senderWallet: st
        sale.fxSource ?? null,
        sale.storeId ?? null, store, till,
        Number.isFinite(sale.lat) ? sale.lat : null, Number.isFinite(sale.lng) ? sale.lng : null,
-       items ? JSON.stringify(items) : null, txHash],
+       items ? JSON.stringify(items) : null,
+       txHash,
+       escrowHold ? txHash : null,
+       status,
+       fulfilmentUrl,
+       escrowHold ? 'pending' : null],
     );
+    const saleId = inserted.rows[0]?.sale_id;
+    if (escrowHold && saleId) {
+      enqueueSaleFulfilment(saleId);
+      return { saleId, fulfilmentPending: true };
+    }
+    return { saleId };
   } catch (e) {
     console.error('[recordMerchantSale] failed (non-fatal):', (e as Error).message);
   }
@@ -831,7 +906,7 @@ router.post('/transfer/prepare', async (req: Request, res: Response): Promise<vo
     if (!to || !amount || !currency) { res.status(400).json({ error: 'Missing to, amount, or currency' }); return; }
 
     const senderWallet = req.consumer!.walletAddress;
-    const toAddress = await resolveRecipient(to);
+    let toAddress = await resolveRecipient(to);
     if (toAddress.toLowerCase() === senderWallet.toLowerCase()) {
       res.status(400).json({ error: 'Cannot send to yourself' }); return;
     }
@@ -840,10 +915,29 @@ router.post('/transfer/prepare', async (req: Request, res: Response): Promise<vo
     let payAmountStr = String(amount);
     let saleCtx: SaleContext | undefined = sale && typeof sale === 'object' ? { ...sale } : undefined;
 
+    // Merchant purchases: hold at platform escrow until fulfilment succeeds.
+    if (saleCtx) {
+      const merchantWallet = toAddress;
+      saleCtx.merchantWallet = merchantWallet;
+      if (saleCtx.merchantId) {
+        const mCheck = await db.query<{ wallet_address: string }>(
+          `SELECT wallet_address FROM merchants WHERE merchant_id = $1`, [saleCtx.merchantId]);
+        if (mCheck.rows[0]?.wallet_address) {
+          saleCtx.merchantWallet = mCheck.rows[0].wallet_address;
+        }
+      }
+      saleCtx.fulfilmentUrl = await resolveFulfilmentUrl({
+        productId: saleCtx.productId,
+        merchantId: saleCtx.merchantId,
+      });
+      saleCtx.escrowHold = true;
+      toAddress = escrowAddress();
+    }
+
     if (saleCtx?.chargeCurrency && saleCtx?.chargeAmount && saleCtx?.merchantId) {
       const resolved = await resolveMerchantCheckout({
         merchantId: saleCtx.merchantId,
-        merchantWallet: toAddress,
+        merchantWallet: saleCtx.merchantWallet ?? toAddress,
         storeId: saleCtx.storeId,
         chargeAmount: String(saleCtx.chargeAmount),
         chargeCurrency: saleCtx.chargeCurrency,
@@ -1011,19 +1105,21 @@ router.post('/transfer/submit', async (req: Request, res: Response): Promise<voi
       });
 
       pendingSessionTransfers.delete(transferId);
-      await recordMerchantSale(pending, txHash);
+      const saleMeta = await recordMerchantSale(pending, txHash);
       await recordSpendEvent({
         consumerId: req.consumer!.consumerId,
         walletAddress: pending.senderWallet,
         spendType: pending.sale ? 'purchase' : 'p2p',
         currency: pending.currency,
         amountUnits: pending.amount,
-        counterparty: pending.toAddress,
+        counterparty: pending.sale?.merchantWallet ?? pending.toAddress,
         txHash,
       });
       res.json({
-        success: true, txHash, to: pending.toAddress,
+        success: true, txHash, to: pending.sale?.merchantWallet ?? pending.toAddress,
         amount: pending.amount.toString(), currency: pending.currency,
+        saleId: saleMeta?.saleId,
+        fulfilmentPending: saleMeta?.fulfilmentPending ?? false,
       });
       return;
     }
@@ -1072,17 +1168,23 @@ router.post('/transfer/submit', async (req: Request, res: Response): Promise<voi
     });
 
     pendingTransfers.delete(safeTxHash);
-    await recordMerchantSale(pending, txHash);   // no-op unless this was a Buy-flow purchase
+    const saleMeta = await recordMerchantSale(pending, txHash);   // no-op unless this was a Buy-flow purchase
     await recordSpendEvent({
       consumerId: req.consumer!.consumerId,
       walletAddress: pending.senderWallet,
       spendType: pending.sale ? 'purchase' : (pending.recipientPhone ? 'escrow' : 'p2p'),
       currency: pending.currency,
       amountUnits: pending.amount,
-      counterparty: pending.toAddress,
+      counterparty: pending.sale?.merchantWallet ?? pending.toAddress,
       txHash,
     });
-    res.json({ success: true, txHash, to: pending.toAddress, amount: pending.amount.toString(), currency: pending.currency });
+    res.json({
+      success: true, txHash,
+      to: pending.sale?.merchantWallet ?? pending.toAddress,
+      amount: pending.amount.toString(), currency: pending.currency,
+      saleId: saleMeta?.saleId,
+      fulfilmentPending: saleMeta?.fulfilmentPending ?? false,
+    });
   } catch (err) {
     console.error('[POST /api/consumer/transfer/submit]', err);
     res.status(500).json({ error: (err as Error).message });

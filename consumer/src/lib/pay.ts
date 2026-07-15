@@ -41,6 +41,9 @@ export interface TransferResult {
   to: string;
   amount: string;
   currency: string;
+  saleId?: string;
+  fulfilmentPending?: boolean;
+  fulfilmentStatus?: string;
 }
 
 export interface SalePayload {
@@ -56,7 +59,7 @@ export interface SalePayload {
   chargeCurrency?: string;
 }
 
-export type TransferStep = 'prepare' | 'sign' | 'relay' | 'done';
+export type TransferStep = 'prepare' | 'sign' | 'relay' | 'escrow' | 'fulfil' | 'done';
 
 export function prepareTransfer(input: { to: string; amount: string; currency: string; sale?: SalePayload }): Promise<PreparedTransfer> {
   return api.post<PreparedTransfer>('/consumer/transfer/prepare', input);
@@ -78,7 +81,6 @@ export async function signAndSubmitTransfer(
       transferId: prepared.transferId,
       sessionSignature,
     });
-    onStep?.('done');
     return result;
   }
 
@@ -92,8 +94,40 @@ export async function signAndSubmitTransfer(
     clientDataJSON:    assertion.clientDataJSON,
     signature:         assertion.signature,
   });
-  onStep?.('done');
   return result;
+}
+
+export interface PurchaseStatus {
+  saleId: string;
+  status: string;
+  fulfilmentStatus: string | null;
+  fulfilmentError: string | null;
+  amount: string;
+  currency: string;
+  merchantName: string | null;
+}
+
+/** Poll until the fulfilment API outcome is known (~30s mock), not until on-chain release. */
+export async function waitForPurchaseFulfilment(
+  saleId: string,
+  onStep?: (step: TransferStep) => void,
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<PurchaseStatus> {
+  const timeoutMs = opts.timeoutMs ?? 50_000;
+  const intervalMs = opts.intervalMs ?? 1_500;
+  const deadline = Date.now() + timeoutMs;
+  onStep?.('escrow');
+  await new Promise(r => setTimeout(r, 300));
+  onStep?.('fulfil');
+
+  while (Date.now() < deadline) {
+    const status = await api.get<PurchaseStatus>(`/consumer/purchases/${saleId}`);
+    const apiDone = status.fulfilmentStatus === 'success' || status.fulfilmentStatus === 'failed';
+    const settled = status.status === 'paid' || status.status === 'refunded';
+    if (apiDone || settled) return status;
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return api.get<PurchaseStatus>(`/consumer/purchases/${saleId}`);
 }
 
 /// Prepare + submit in one call. Starts a session (one passkey prompt) when enabled.
@@ -106,7 +140,22 @@ export async function executeTransfer(
     await ensurePaymentSession();
   }
   const prepared = await prepareTransfer(input);
-  return signAndSubmitTransfer(prepared, onStep);
+  const result = await signAndSubmitTransfer(prepared, onStep);
+
+  if (result.fulfilmentPending && result.saleId) {
+    const fulfil = await waitForPurchaseFulfilment(result.saleId, onStep);
+    onStep?.('done');
+    const apiFailed = fulfil.fulfilmentStatus === 'failed' || fulfil.status === 'refunded';
+    const apiOk = fulfil.fulfilmentStatus === 'success' || fulfil.status === 'paid';
+    return {
+      ...result,
+      fulfilmentPending: !apiOk && !apiFailed,
+      fulfilmentStatus: apiFailed ? 'refunded' : apiOk ? 'paid' : fulfil.status,
+    };
+  }
+
+  onStep?.('done');
+  return result;
 }
 
 // ── External USDC withdrawal (unknown 0x / MetaMask) ─────────────────────────

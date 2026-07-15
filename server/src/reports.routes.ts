@@ -177,6 +177,32 @@ router.get('/settlement-fees', allowPublicPage('reports'), async (_req: Request,
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });
 
+// GET /api/admin/reports/withdrawal-fees — platform revenue from external USDC withdrawals.
+router.get('/withdrawal-fees', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const r = await db.query<{ currency: string; withdrawals: number; total_fee: string; total_net: string; total_gross: string }>(
+      `SELECT currency,
+              COUNT(*)::int AS withdrawals,
+              COALESCE(SUM(fee_units), 0)::text AS total_fee,
+              COALESCE(SUM(net_units), 0)::text AS total_net,
+              COALESCE(SUM(gross_units), 0)::text AS total_gross
+         FROM consumer_withdrawals
+        WHERE status = 'executed'
+        GROUP BY currency`,
+    );
+    res.json(r.rows.map(x => {
+      const dec = x.currency.toUpperCase() === 'USDC' || x.currency.toUpperCase() === 'USD' ? 6 : 2;
+      return {
+        currency: x.currency,
+        withdrawals: x.withdrawals,
+        totalFee: (Number(x.total_fee) / 10 ** dec).toFixed(2),
+        totalNet: (Number(x.total_net) / 10 ** dec).toFixed(2),
+        totalGross: (Number(x.total_gross) / 10 ** dec).toFixed(2),
+      };
+    }));
+  } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+});
+
 // GET /api/admin/reports/settlements — merchant fiat/on-chain payout requests.
 router.get('/settlements', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -328,29 +354,57 @@ router.get('/conversion-fees', allowPublicPage('reports'), async (_req: Request,
 // difference is attempts that reached 'deploy' but failed before writing the DB row.
 router.get('/registrations', allowPublicPage('reports'), async (_req: Request, res: Response): Promise<void> => {
   try {
+    // Self-heal: registration can finish writing `consumers` then fail to mark the
+    // attempt completed (best-effort tracker). Those stuck `started` rows inflate
+    // "never finished" and understate success rate vs the Consumers dashboard count.
+    await db.query(
+      `UPDATE registration_attempts ra
+          SET status = 'completed',
+              current_step = 'done',
+              error = CASE
+                WHEN error IS NULL OR error = '' THEN 'Reconciled: consumer row exists'
+                ELSE error
+              END,
+              updated_at = NOW()
+        WHERE ra.status = 'started'
+          AND ra.wallet_address IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM consumers c
+             WHERE LOWER(c.wallet_address) = LOWER(ra.wallet_address)
+          )`,
+    );
+
     const totals = await db.query<{ status: string; n: number }>(
       `SELECT status, count(*)::int n FROM registration_attempts GROUP BY status`);
     const byFailedStep = await db.query<{ failed_step: string | null; n: number }>(
-      `SELECT failed_step, count(*)::int n FROM registration_attempts
-        WHERE status = 'failed' GROUP BY failed_step ORDER BY n DESC`);
-    const recentFailures = await db.query(
-      `SELECT attempt_id, failed_step, error, ens_subdomain, country_code,
+      `SELECT COALESCE(failed_step, current_step) AS failed_step, count(*)::int n
+         FROM registration_attempts
+        WHERE status IN ('failed', 'started')
+        GROUP BY COALESCE(failed_step, current_step)
+        ORDER BY n DESC`);
+    const recentIncomplete = await db.query(
+      `SELECT attempt_id, status, current_step, failed_step, error, ens_subdomain, country_code,
               wallet_address, created_at
          FROM registration_attempts
-        WHERE status = 'failed'
+        WHERE status IN ('failed', 'started')
         ORDER BY created_at DESC LIMIT 50`);
 
     const byStatus: Record<string, number> = {};
     for (const r of totals.rows) byStatus[r.status] = r.n;
+    const completed = byStatus.completed ?? 0;
+    const failed = byStatus.failed ?? 0;
+    const started = byStatus.started ?? 0;
     const total = Object.values(byStatus).reduce((a, b) => a + b, 0);
+    const notCompleted = failed + started;
 
     res.json({
       total,
-      completed:      byStatus.completed ?? 0,
-      failed:         byStatus.failed ?? 0,
-      started:        byStatus.started ?? 0,   // never finished — crashed or in-flight
-      byFailedStep:   byFailedStep.rows,
-      recentFailures: recentFailures.rows,
+      completed,
+      failed,
+      started,                 // never finished — crashed or still in-flight
+      notCompleted,            // failed + started (matches 100% − success rate)
+      byFailedStep: byFailedStep.rows,
+      recentFailures: recentIncomplete.rows, // includes incomplete (status shown in UI)
     });
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });

@@ -155,6 +155,7 @@ export async function relaySessionSetupTx(params: {
     ownerSignerAddress: params.ownerSignerAddress,
     safeTx: params.safeTx,
     assertion: params.assertion,
+    gasSource: 'session_enable',
   });
 }
 
@@ -179,6 +180,7 @@ export async function completeSessionStart(params: {
     ownerSignerAddress: params.ownerSignerAddress,
     safeTx: params.safeTx,
     assertion: params.assertion,
+    gasSource: 'session_add_key',
   });
 
   await db.query(
@@ -213,6 +215,7 @@ export async function completeSessionRevoke(params: {
     ownerSignerAddress: params.ownerSignerAddress,
     safeTx: params.safeTx,
     assertion: params.assertion,
+    gasSource: 'session_revoke',
   });
   await db.query(
     `UPDATE session_keys SET revoked_at = NOW()

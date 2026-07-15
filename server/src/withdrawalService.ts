@@ -127,7 +127,13 @@ export async function prepareWithdrawal(params: {
     isRegisteredConsumer(toAddress),
     isTrustedCounterparty(toAddress),
   ]);
-  if (registered || trusted) {
+  if (trusted) {
+    throw Object.assign(
+      new Error('That address is a platform address (escrow/treasury), not an external wallet'),
+      { status: 409, code: 'PLATFORM_ADDRESS' },
+    );
+  }
+  if (registered) {
     throw Object.assign(
       new Error('This address is an iMali wallet — use Send (internal transfer) instead'),
       { status: 409, code: 'USE_INTERNAL_TRANSFER' },
@@ -365,4 +371,114 @@ export async function submitWithdrawal(params: {
     ).catch(() => {});
     throw e;
   }
+}
+
+export interface WithdrawalSummary {
+  count: number;
+  grossUsdc: number;
+  feeUsdc: number;
+  netUsdc: number;
+  grossDisplay: string;
+  feeDisplay: string;
+  netDisplay: string;
+}
+
+function fmtUsdc(n: number): string {
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Aggregates executed external withdrawals (assets that left the ecosystem). */
+export async function getWithdrawalSummary(): Promise<WithdrawalSummary> {
+  try {
+    const r = await db.query<{ n: string; gross: string; fee: string; net: string }>(
+      `SELECT COUNT(*)::text AS n,
+              COALESCE(SUM(gross_units), 0)::text AS gross,
+              COALESCE(SUM(fee_units), 0)::text AS fee,
+              COALESCE(SUM(net_units), 0)::text AS net
+         FROM consumer_withdrawals
+        WHERE status = 'executed'`,
+    );
+    const row = r.rows[0];
+    const grossUsdc = Number(row?.gross ?? 0) / 1e6;
+    const feeUsdc = Number(row?.fee ?? 0) / 1e6;
+    const netUsdc = Number(row?.net ?? 0) / 1e6;
+    return {
+      count: Number(row?.n ?? 0),
+      grossUsdc,
+      feeUsdc,
+      netUsdc,
+      grossDisplay: fmtUsdc(grossUsdc),
+      feeDisplay: fmtUsdc(feeUsdc),
+      netDisplay: fmtUsdc(netUsdc),
+    };
+  } catch {
+    return {
+      count: 0, grossUsdc: 0, feeUsdc: 0, netUsdc: 0,
+      grossDisplay: '$0.00', feeDisplay: '$0.00', netDisplay: '$0.00',
+    };
+  }
+}
+
+export interface WithdrawalListItem {
+  id: string;
+  from_wallet: string;
+  to_address: string;
+  fromLabel: string;
+  toLabel: string;
+  grossDisplay: string;
+  feeDisplay: string;
+  netDisplay: string;
+  fee_bps: number;
+  status: string;
+  withdraw_tx: string | null;
+  recipient_name: string | null;
+  recipient_country: string | null;
+  created_at: string;
+  executed_at: string | null;
+  currency: string;
+}
+
+export async function listExecutedWithdrawals(limit = 100): Promise<WithdrawalListItem[]> {
+  const r = await db.query<{
+    id: string; from_wallet: string; to_address: string; gross_units: string; fee_units: string;
+    net_units: string; fee_bps: number; status: string; withdraw_tx: string | null;
+    recipient_name: string | null; recipient_country: string | null;
+    created_at: Date; executed_at: Date | null; sender_tag: string | null; sender_display: string | null;
+  }>(
+    `SELECT w.id, w.from_wallet, w.to_address, w.gross_units::text, w.fee_units::text, w.net_units::text,
+            w.fee_bps, w.status, w.withdraw_tx, w.recipient_name, w.recipient_country,
+            w.created_at, w.executed_at,
+            c.ens_subdomain AS sender_tag, c.display_name AS sender_display
+       FROM consumer_withdrawals w
+       LEFT JOIN consumers c ON c.consumer_id = w.consumer_id
+      WHERE w.status = 'executed'
+      ORDER BY COALESCE(w.executed_at, w.created_at) DESC
+      LIMIT $1`,
+    [limit],
+  );
+  return r.rows.map(row => {
+    const gross = Number(row.gross_units) / 1e6;
+    const fee = Number(row.fee_units) / 1e6;
+    const net = Number(row.net_units) / 1e6;
+    const fromLabel = row.sender_display || (row.sender_tag ? `@${row.sender_tag}` : row.from_wallet);
+    const toShort = `${row.to_address.slice(0, 6)}…${row.to_address.slice(-4)}`;
+    return {
+      id: row.id,
+      from_wallet: row.from_wallet,
+      to_address: row.to_address,
+      fromLabel,
+      toLabel: row.recipient_name ? `${row.recipient_name} (${toShort})` : toShort,
+      grossDisplay: gross.toFixed(2),
+      feeDisplay: fee.toFixed(2),
+      netDisplay: net.toFixed(2),
+      fee_bps: row.fee_bps,
+      status: row.status,
+      withdraw_tx: row.withdraw_tx,
+      recipient_name: row.recipient_name,
+      recipient_country: row.recipient_country,
+      created_at: row.created_at.toISOString?.() ?? String(row.created_at),
+      executed_at: row.executed_at ? (row.executed_at.toISOString?.() ?? String(row.executed_at)) : null,
+      currency: 'USDC',
+    };
+  });
 }

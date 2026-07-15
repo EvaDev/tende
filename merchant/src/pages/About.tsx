@@ -29,11 +29,10 @@ export default function About() {
       <Section title="Why a separate app">
         <p className="text-sm text-gray-700 leading-relaxed">
           A merchant is a business with staff turnover and shared tills — a different trust context from
-          an individual consumer. Wallet-connect (RainbowKit/MetaMask) doesn't fit day-to-day operators, so
-          the merchant app has <strong>no wallet, no wagmi, no RainbowKit</strong> at all. Instead: custody
-          (one corporate account, unchanged from before) is split from access (many operators, each with
-          their own passkey login and a role) and from execution authority (only settlement above a
-          threshold needs a second approval).
+          an individual consumer. Day-to-day operators sign in with a <strong>passkey</strong> (no wallet).
+          The one exception is <strong>first-time owner registration</strong>: connect the business wallet,
+          prove ownership with a signature, then create an org_admin passkey. After that, custody stays on
+          the corporate wallet while operators use passkeys and roles.
         </p>
       </Section>
 
@@ -50,10 +49,10 @@ export default function About() {
         <p className="text-sm text-gray-700 leading-relaxed">
           Operators sign in with a <strong>passkey</strong> (WebAuthn) — the exact same mechanism as
           consumer login, but this passkey does <em>not</em> back a Safe wallet; it's purely a login
-          credential bound to a <Code>merchant_members</Code> row. First login is a "claim" ceremony: an
-          org_admin invites by email/role (<Code>POST /api/member-auth/invite</Code>, returns a numeric
-          Invite ID shared out-of-band — there's no invite-token/email-link system yet), the invitee opens
-          the merchant app, enters that ID + their email, and creates a passkey.
+          credential bound to a <Code>merchant_members</Code> row. New businesses use
+          <strong> Register as a merchant</strong> (wallet connect → business form → passkey). Staff join
+          via invite: an org_admin invites by email/role (<Code>POST /api/member-auth/invite</Code>), the
+          invitee claims with Invite ID + email and creates a passkey.
         </p>
       </Section>
 

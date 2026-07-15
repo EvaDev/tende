@@ -37,6 +37,18 @@ interface Product {
   country_code: string;
   currency_code: string;
   is_active: boolean;
+  barcode: string | null;
+  fulfilment_url: string | null;
+  source: string;
+  external_product_id: string | null;
+}
+
+interface CatalogApi {
+  url: string | null;
+  adapter: string | null;
+  syncedAt: string | null;
+  mockCatalogUrl?: string;
+  defaultFulfilmentUrl?: string;
 }
 
 interface FormState {
@@ -51,15 +63,18 @@ interface FormState {
   maxPrice: string;
   incursVat: boolean;
   validityDays: string;
+  barcode: string;
+  fulfilmentUrl: string;
 }
 
-function emptyForm(corridor?: ProductCorridor): FormState {
+function emptyForm(corridor?: ProductCorridor, defaultFulfil?: string): FormState {
   return {
     name: '', description: '', deliveryType: 'DIRECT',
     currencyCode: corridor?.currencyCode ?? 'ZAR',
     countryCode: corridor?.countryCode ?? 'ZA',
     isFixedPrice: true,
     unitPrice: '1', minPrice: '1', maxPrice: '100', incursVat: false, validityDays: '',
+    barcode: '', fulfilmentUrl: defaultFulfil ?? '',
   };
 }
 
@@ -80,6 +95,11 @@ export default function Products() {
   const { isOrgAdmin } = useMember();
   const [rows, setRows]       = useState<Product[]>([]);
   const [corridors, setCorridors] = useState<ProductCorridor[]>([]);
+  const [catalog, setCatalog] = useState<CatalogApi | null>(null);
+  const [catalogUrl, setCatalogUrl] = useState('');
+  const [catalogSaving, setCatalogSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
   const [adding, setAdding]   = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [form, setForm]       = useState<FormState>(emptyForm());
@@ -122,12 +142,22 @@ export default function Products() {
       .catch(() => setCorridors([]));
   }
 
-  useEffect(() => { load(); loadCorridors(); }, [isOrgAdmin]);
+  function loadCatalog() {
+    if (!isOrgAdmin) return;
+    apiFetch<CatalogApi>('/api/merchant/me/products/catalog-api')
+      .then(c => {
+        setCatalog(c);
+        setCatalogUrl(c.url ?? '');
+      })
+      .catch(() => setCatalog(null));
+  }
+
+  useEffect(() => { load(); loadCorridors(); loadCatalog(); }, [isOrgAdmin]);
 
   function openAdd() {
     const first = corridors[0];
     setEditing(null);
-    setForm(emptyForm(first));
+    setForm(emptyForm(first, catalog?.defaultFulfilmentUrl));
     setError('');
     setAdding(true);
   }
@@ -146,6 +176,8 @@ export default function Products() {
       maxPrice: p.max_price != null ? String(p.max_price) : '',
       incursVat: p.incurs_vat,
       validityDays: p.validity_days != null ? String(p.validity_days) : '',
+      barcode: p.barcode ?? '',
+      fulfilmentUrl: p.fulfilment_url ?? '',
     });
     setError('');
     setAdding(true);
@@ -163,6 +195,43 @@ export default function Products() {
     });
   };
 
+  async function saveCatalog() {
+    setCatalogSaving(true);
+    setSyncMsg('');
+    try {
+      const url = catalogUrl.trim() || null;
+      const saved = await apiFetch<CatalogApi>('/api/merchant/me/products/catalog-api', {
+        method: 'PUT',
+        body: JSON.stringify({ url, adapter: url ? 'flash_pim' : null }),
+      });
+      setCatalog(c => ({ ...c, ...saved, mockCatalogUrl: c?.mockCatalogUrl, defaultFulfilmentUrl: c?.defaultFulfilmentUrl }));
+      setSyncMsg(url ? 'Catalogue API saved.' : 'Catalogue API cleared.');
+    } catch (e) {
+      setSyncMsg((e as Error).message);
+    } finally {
+      setCatalogSaving(false);
+    }
+  }
+
+  async function syncNow() {
+    setSyncing(true);
+    setSyncMsg('');
+    try {
+      const result = await apiFetch<{
+        upserted: number; deactivated: number; skipped: number; totalRemote: number; syncedAt: string | null;
+      }>('/api/merchant/me/products/catalog-api/sync', { method: 'POST', body: '{}' });
+      setSyncMsg(
+        `Synced ${result.upserted} products (${result.totalRemote} remote, ${result.deactivated} deactivated, ${result.skipped} skipped).`,
+      );
+      setCatalog(c => c ? { ...c, syncedAt: result.syncedAt } : c);
+      load();
+    } catch (e) {
+      setSyncMsg((e as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function save() {
     setError('');
     setSaving(true);
@@ -177,6 +246,8 @@ export default function Products() {
         maxPrice: form.maxPrice ? Number(form.maxPrice) : null,
         incursVat: form.incursVat,
         validityDays: form.validityDays ? Number(form.validityDays) : null,
+        barcode: form.barcode.trim() || null,
+        fulfilmentUrl: form.fulfilmentUrl.trim() || null,
       };
       if (!editing) {
         body.currencyCode = form.currencyCode;
@@ -208,8 +279,14 @@ export default function Products() {
 
   const cols: Col<Product>[] = [
     { key: 'name', header: 'Product',
-      sort: p => p.name.toLowerCase(), search: p => p.name,
-      render: p => <span className="font-medium">{p.name}</span> },
+      sort: p => p.name.toLowerCase(), search: p => `${p.name} ${p.barcode ?? ''}`,
+      render: p => (
+        <span>
+          <span className="font-medium">{p.name}</span>
+          {p.source === 'api' && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-gray-400">API</span>}
+          {p.barcode && <span className="block text-[11px] font-mono text-gray-500">{p.barcode}</span>}
+        </span>
+      ) },
     { key: 'delivery', header: 'Delivery', sort: p => p.delivery_type,
       render: p => deliveryLabel(p.delivery_type) },
     { key: 'currency', header: 'Currency', sort: p => p.currency_code,
@@ -247,12 +324,58 @@ export default function Products() {
           <h2 className="text-xl font-semibold text-white">Products</h2>
           <p className="text-sm text-white/90 mt-1">
             {isOrgAdmin
-              ? "Manage your catalogue. Pick the currency per product — match your stores (e.g. ZAR for ZA, MWK for MW). In-person and voucher products are used on Point of Sale."
+              ? "Products on this list are available on Point of Sale."
               : "Your store's product catalogue. Contact head office to add or change products."}
           </p>
         </div>
         {isOrgAdmin && <Button size="sm" onClick={openAdd}>+ Add Product</Button>}
       </div>
+
+      {isOrgAdmin && (
+        <Card className="space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Catalogue API</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Optionally sync products from an external listing API (Flash PIM). You can still add products manually.
+            </p>
+          </div>
+          <div>
+            <Label>Product listing URL</Label>
+            <Input
+              value={catalogUrl}
+              onChange={e => setCatalogUrl(e.target.value)}
+              placeholder="https://pim-api.qa.flash.co.za/api/PimProducts/1"
+              className="font-mono text-xs"
+            />
+            {catalog?.mockCatalogUrl && (
+              <p className="text-xs text-gray-500 mt-1">
+                Without VPN, use the bundled fixture:{' '}
+                <button
+                  type="button"
+                  className="text-brand-accent underline"
+                  onClick={() => setCatalogUrl(catalog.mockCatalogUrl!)}
+                >
+                  {catalog.mockCatalogUrl}
+                </button>
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={saveCatalog} disabled={catalogSaving}>
+              {catalogSaving ? 'Saving…' : 'Save API'}
+            </Button>
+            <Button size="sm" onClick={syncNow} disabled={syncing || !(catalogUrl || catalog?.url)}>
+              {syncing ? 'Syncing…' : 'Sync now'}
+            </Button>
+            {catalog?.syncedAt && (
+              <span className="text-xs text-gray-500">
+                Last sync {new Date(catalog.syncedAt).toLocaleString()}
+              </span>
+            )}
+          </div>
+          {syncMsg && <p className="text-sm text-gray-700">{syncMsg}</p>}
+        </Card>
+      )}
 
       {isOrgAdmin && adding && (
         <Card className="space-y-4">
@@ -344,6 +467,22 @@ export default function Products() {
             <div>
               <Label>Validity (days, optional)</Label>
               <Input type="number" min="0" step="1" value={form.validityDays} onChange={set('validityDays')} placeholder="Leave blank if none" />
+            </div>
+            <div>
+              <Label>Barcode (optional)</Label>
+              <Input value={form.barcode} onChange={set('barcode')} placeholder="e.g. 6009900416878" className="font-mono text-xs" />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Fulfilment API URL</Label>
+              <Input
+                value={form.fulfilmentUrl}
+                onChange={set('fulfilmentUrl')}
+                placeholder={catalog?.defaultFulfilmentUrl ?? 'https://…/fulfil'}
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Called after payment. Funds stay in escrow until this returns success (or failure → refund).
+              </p>
             </div>
           </div>
           {error && <p className="text-brand-danger text-sm">{error}</p>}

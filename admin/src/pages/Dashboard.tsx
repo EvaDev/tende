@@ -37,6 +37,9 @@ interface ProtocolFinancials {
   yieldHarvestDue: boolean;
   settlementFeesDisplay: string;
   settlementCount: number;
+  withdrawalFeesDisplay?: string;
+  withdrawalCount?: number;
+  withdrawalNetDisplay?: string;
   expensesDisplay: string;
   cacExpensesDisplay: string;
   cacCount: number;
@@ -50,6 +53,15 @@ interface ProtocolFinancials {
   netDisplay: string;
   tradingSinceDisplay: string;
   usdPerZar: number | null;
+}
+
+interface WithdrawalSummary {
+  count: number;
+  netUsdc: number;
+  feeUsdc: number;
+  netDisplay: string;
+  feeDisplay: string;
+  grossDisplay: string;
 }
 
 const DETAIL_TEXT = 'text-lg text-white/70';
@@ -126,6 +138,8 @@ interface Counts {
   vaultClaims: VaultClaims | null;
   financials: ProtocolFinancials | null;
   treasurySummary: TreasurySummary | null;
+  withdrawals: WithdrawalSummary | null;
+  escrowUsdc: number;
   totalSalesDisplay: string | null;
 }
 
@@ -217,7 +231,7 @@ export default function Dashboard() {
   const appName = useAppName();
   const [counts, setCounts] = useState<Counts>({
     merchants: 0, consumers: 0, products: 0, countries: 0, currencies: 0, pendingKyc: 0,
-    vaultClaims: null, financials: null, treasurySummary: null, totalSalesDisplay: null,
+    vaultClaims: null, financials: null, treasurySummary: null, withdrawals: null, escrowUsdc: 0, totalSalesDisplay: null,
   });
 
   useEffect(() => {
@@ -225,7 +239,8 @@ export default function Dashboard() {
       apiFetch<{
         merchants: number; consumers: number; pendingKyc: number;
         vaultClaims: VaultClaims | null; financials: ProtocolFinancials | null;
-        treasurySummary: TreasurySummary | null; totalSalesDisplay: string | null;
+        treasurySummary: TreasurySummary | null; withdrawals: WithdrawalSummary | null;
+        escrowUsdc?: number; totalSalesDisplay: string | null;
       }>('/api/admin/stats'),
       apiFetch<unknown[]>('/api/admin/countries'),
       apiFetch<unknown[]>('/api/admin/currencies'),
@@ -238,6 +253,8 @@ export default function Dashboard() {
         vaultClaims: stats.vaultClaims,
         financials: stats.financials,
         treasurySummary: stats.treasurySummary,
+        withdrawals: stats.withdrawals,
+        escrowUsdc: stats.escrowUsdc ?? 0,
         totalSalesDisplay: stats.totalSalesDisplay,
         countries:  countries.length,
         currencies: currencies.length,
@@ -260,6 +277,8 @@ export default function Dashboard() {
     ? Number(treasury.vaultUsdcDisplay.replace(/[^0-9.]/g, ''))
     : consumerUsdc + merchantUsdc;
   const platformUsdc = Math.max(0, vaultUsdcTotal - consumerUsdc - merchantUsdc);
+  const withdrawnUsdc = counts.withdrawals?.netUsdc ?? 0;
+  const escrowUsdc = counts.escrowUsdc ?? 0;
   const totalUsdcHeld = consumerUsdc + merchantUsdc + platformUsdc;
 
   const consumerAppUrl = window.location.hostname === 'localhost'
@@ -278,6 +297,7 @@ export default function Dashboard() {
               { label: 'Conversions', count: String(fin.conversionCount), value: fin.conversionFeesDisplay },
               { label: 'Yield', count: fin.yieldHarvestDue ? 'Harvest due' : '—', value: fin.yieldRevenueDisplay },
               { label: 'Settlement', count: String(fin.settlementCount), value: fin.settlementFeesDisplay },
+              { label: 'Withdrawals', count: String(fin.withdrawalCount ?? 0), value: fin.withdrawalFeesDisplay ?? 'R0.00' },
             ]}
             onNavigate={navigate}
           />
@@ -338,6 +358,10 @@ export default function Dashboard() {
             { label: 'Consumers', value: fmtUsdInt(consumerUsdc) },
             { label: 'Merchants', value: fmtUsdInt(merchantUsdc) },
             { label: 'Platform', value: fmtUsdInt(platformUsdc) },
+            ...(escrowUsdc > 0
+              ? [{ label: '└ Escrow', value: fmtUsdInt(escrowUsdc) }]
+              : []),
+            { label: 'Withdrawals (out)', value: fmtUsdInt(withdrawnUsdc) },
           ] : undefined}
           onNavigate={navigate}
         />

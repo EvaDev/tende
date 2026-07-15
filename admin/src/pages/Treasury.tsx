@@ -6,8 +6,29 @@ import { useRole } from '@/hooks/useRole';
 import MerchantSettlementsPanel from '@/components/MerchantSettlementsPanel';
 
 interface SupplyRow { token: string; label: string; address: string; decimals: number; supply: string; kind: 'treasury' | 'vault'; }
+interface WithdrawalRow {
+  id: string;
+  fromLabel: string;
+  toLabel: string;
+  to_address: string;
+  grossDisplay: string;
+  feeDisplay: string;
+  netDisplay: string;
+  withdraw_tx: string | null;
+  recipient_name: string | null;
+  executed_at: string | null;
+  created_at: string;
+  currency: string;
+}
+interface WithdrawalSummary {
+  count: number;
+  netDisplay: string;
+  feeDisplay: string;
+  grossDisplay: string;
+}
 interface TreasuryInfo {
   supplies: SupplyRow[];
+  withdrawals?: { summary: WithdrawalSummary; rows: WithdrawalRow[] };
   dev_tools?: boolean;
 }
 
@@ -324,6 +345,85 @@ export default function Treasury() {
               {!loading && !loadError && (info?.supplies?.length ?? 0) === 0 && (
                 <tr>
                   <td colSpan={4} className="py-4 text-center text-gray-400">No treasury tokens registered yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Asset withdrawals</CardTitle>
+        </CardHeader>
+        <p className="text-sm text-gray-500 mb-4 px-1">
+          USDC sent to external wallets leaves the vault / ecosystem. Platform fee is retained as a USDC claim.
+          Net withdrawn is not part of Total held on the dashboard.
+        </p>
+        {info?.withdrawals?.summary && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-sm">
+            <div className="rounded-lg bg-gray-50 px-3 py-2">
+              <div className="text-xs text-gray-500">Withdrawals</div>
+              <div className="font-semibold tabular-nums">{info.withdrawals.summary.count}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-3 py-2">
+              <div className="text-xs text-gray-500">Gross</div>
+              <div className="font-semibold tabular-nums">{info.withdrawals.summary.grossDisplay}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-3 py-2">
+              <div className="text-xs text-gray-500">Fees retained</div>
+              <div className="font-semibold tabular-nums">{info.withdrawals.summary.feeDisplay}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-3 py-2">
+              <div className="text-xs text-gray-500">Net left ecosystem</div>
+              <div className="font-semibold tabular-nums text-brand-accent">{info.withdrawals.summary.netDisplay}</div>
+            </div>
+          </div>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-gray-400">
+              <tr className="text-left">
+                <th className="font-medium pb-2">When</th>
+                <th className="font-medium pb-2">From</th>
+                <th className="font-medium pb-2">Beneficiary</th>
+                <th className="font-medium pb-2 text-right">Gross</th>
+                <th className="font-medium pb-2 text-right">Fee</th>
+                <th className="font-medium pb-2 text-right">Net out</th>
+                <th className="font-medium pb-2">Tx</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(info?.withdrawals?.rows ?? []).map((w) => (
+                <tr key={w.id} className="border-t border-gray-100">
+                  <td className="py-2 text-gray-600 whitespace-nowrap">
+                    {new Date(w.executed_at ?? w.created_at).toLocaleString()}
+                  </td>
+                  <td className="py-2">{w.fromLabel}</td>
+                  <td className="py-2">
+                    <div>{w.recipient_name ?? w.toLabel}</div>
+                    <div className="font-mono text-[11px] text-gray-400">{w.to_address.slice(0, 10)}…</div>
+                  </td>
+                  <td className="py-2 text-right tabular-nums">${w.grossDisplay}</td>
+                  <td className="py-2 text-right tabular-nums">${w.feeDisplay}</td>
+                  <td className="py-2 text-right tabular-nums font-medium">${w.netDisplay}</td>
+                  <td className="py-2 font-mono text-[11px] text-gray-400">
+                    {w.withdraw_tx ? (
+                      <a
+                        href={`https://sepolia.etherscan.io/tx/${w.withdraw_tx}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:text-brand-accent underline"
+                      >
+                        {w.withdraw_tx.slice(0, 8)}…
+                      </a>
+                    ) : '—'}
+                  </td>
+                </tr>
+              ))}
+              {!loading && !loadError && (info?.withdrawals?.rows?.length ?? 0) === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-4 text-center text-gray-400">No executed withdrawals yet.</td>
                 </tr>
               )}
             </tbody>

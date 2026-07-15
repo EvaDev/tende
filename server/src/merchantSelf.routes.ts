@@ -17,6 +17,11 @@ import { parseProductBody, mapProductRow, PRODUCT_SELECT } from './productHelper
 import { prepareChangeVoucher, sendChangeVoucherToTag } from './changeVoucherService.js';
 import { createMerchantStore, listMerchantStores, listProductCorridors, resolveProductCorridor, updateMerchantStore } from './storeService.js';
 import { SQL_STORE_LABEL, SQL_TILL_LABEL } from './salesLabels.js';
+import {
+  getCatalogConfig, saveCatalogConfig, syncMerchantCatalog, defaultFulfilmentUrl,
+} from './productCatalogService.js';
+import { processSaleFulfilment } from './fulfilmentService.js';
+import config from './config.js';
 
 const router = express.Router();
 
@@ -141,6 +146,11 @@ router.post('/me/products', requireOrgAdmin, async (req: Request, res: Response)
       body.countryCode,
     );
 
+    if (parsed.fields.fulfilment_url === undefined) {
+      parsed.fields.fulfilment_url = defaultFulfilmentUrl();
+    }
+    parsed.fields.source = 'manual';
+
     const cols = ['merchant_id', 'country_code', 'currency_code', ...Object.keys(parsed.fields), 'is_active'];
     const vals = [merchantId, corridor.countryCode, corridor.currencyCode, ...Object.values(parsed.fields), true];
     const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
@@ -187,6 +197,84 @@ router.patch('/me/products/:id', requireOrgAdmin, async (req: Request, res: Resp
   } catch (err) {
     const status = (err as { status?: number }).status ?? 400;
     res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+// ── Product catalogue API (org_admin) ─────────────────────────────────────────
+router.get('/me/products/catalog-api', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const cfg = await getCatalogConfig(req.member!.merchantId);
+    res.json({
+      url: cfg.url,
+      adapter: cfg.adapter,
+      syncedAt: cfg.syncedAt,
+      mockCatalogUrl: `${config.server.publicApiBase.replace(/\/$/, '')}/api/mock/catalog/flash-pim`,
+      defaultFulfilmentUrl: defaultFulfilmentUrl(),
+    });
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+router.put('/me/products/catalog-api', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const body = req.body as { url?: string | null; adapter?: string | null };
+    const cfg = await saveCatalogConfig(req.member!.merchantId, {
+      url: body.url,
+      adapter: body.adapter !== undefined ? body.adapter : (body.url ? 'flash_pim' : null),
+    });
+    res.json({
+      url: cfg.url,
+      adapter: cfg.adapter,
+      syncedAt: cfg.syncedAt,
+    });
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/me/products/catalog-api/sync', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await syncMerchantCatalog(req.member!.merchantId);
+    const cfg = await getCatalogConfig(req.member!.merchantId);
+    res.json({ ...result, syncedAt: cfg.syncedAt });
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    res.status(status).json({ error: (err as Error).message });
+  }
+});
+
+// Poll fulfilment outcome for a sale (merchant sales UI / debugging)
+router.get('/me/sales/:saleId/fulfilment', requireMemberAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const r = await db.query(
+      `SELECT sale_id, status, fulfilment_status, fulfilment_error, escrow_tx, release_tx, tx_hash
+         FROM merchant_sales
+        WHERE sale_id = $1 AND merchant_id = $2`,
+      [req.params.saleId, req.member!.merchantId],
+    );
+    if (!r.rows.length) { res.status(404).json({ error: 'Sale not found' }); return; }
+    res.json(r.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Retry fulfilment for a stuck pending sale (org_admin)
+router.post('/me/sales/:saleId/fulfilment/retry', requireOrgAdmin, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const saleId = String(req.params.saleId);
+    const check = await db.query(
+      `SELECT sale_id FROM merchant_sales WHERE sale_id = $1 AND merchant_id = $2`,
+      [saleId, req.member!.merchantId],
+    );
+    if (!check.rows.length) { res.status(404).json({ error: 'Sale not found' }); return; }
+    const result = await processSaleFulfilment(saleId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 
@@ -361,7 +449,8 @@ router.get('/me/sales', requireMemberAuth, async (req: Request, res: Response): 
       `SELECT sale_id, amount, currency, charge_amount, charge_currency, fx_rate,
               ${SQL_STORE_LABEL} AS store_number,
               ${SQL_TILL_LABEL} AS till_number,
-              latitude, longitude, items, consumer_tag, consumer_wallet, tx_hash, status, created_at
+              latitude, longitude, items, consumer_tag, consumer_wallet, tx_hash, status,
+              fulfilment_status, escrow_tx, release_tx, created_at
          FROM merchant_sales WHERE merchant_id = $1
         ORDER BY created_at DESC LIMIT 500`,
       [merchantId],

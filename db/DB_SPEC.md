@@ -68,9 +68,14 @@ Deliberately separate from `merchants` — a merchant may have multiple off-ramp
 ### `products` and `product_skus`
 Product catalogue lives here, not on-chain (confirmed). Key integration fields:
 
-- `external_product_id`: maps to the legacy 1V product ID. Used to route spend calls to the correct legacy API endpoint.
-- `supplier_api_code`: the third-party supplier's product code (e.g. for airtime, electricity). Required for spend fulfilment via existing supplier APIs.
-- `delivery_type`: `DIRECT` (instant digital delivery), `VOUCHER` (code delivered to consumer), `PHYSICAL` (logistics required), `VIRTUAL` (access/subscription).
+- `external_product_id`: maps to the legacy 1V product ID or Flash PIM `pimId`. Used to upsert API-synced rows and route fulfilment.
+- `supplier_api_code`: the third-party supplier's product code (e.g. for airtime, electricity).
+- `barcode`: POS / supplier barcode (e.g. Flash Internal Barcode).
+- `brand`: marketing brand (e.g. Flash PIM `baseProduct.brand` = 1Voucher).
+- `category`: product category (e.g. Flash PIM `productCategory` = eVoucher).
+- `fulfilment_url`: HTTP endpoint called after payment; funds stay in platform escrow until success (release → merchant) or failure (refund → consumer). Defaults to the mock fulfilment API.
+- `source`: `manual` (merchant-created) or `api` (synced from `merchants.catalog_api_url`).
+- `delivery_type`: `DIRECT` (in person), `VOUCHER`, `PHYSICAL`, `VIRTUAL` (VAS). All types can appear on Point of Sale.
 
 The `category` / `subcategory` fields are a simplified version of the full 1V Division → Category → SubCategory → Group hierarchy. The commented-out Cairo structs (`Division`, `Category`, `SubCategory`, `Group`) can be revived as DB tables if the full hierarchy is needed for the consumer browse experience. For the initial build, flat category/subcategory strings are sufficient.
 

@@ -161,6 +161,11 @@ export default function Pay() {
           }, setPayStep));
         } catch (e) {
           const msg = (e as Error).message || '';
+          if (msg.includes('PLATFORM_ADDRESS') || msg.includes('platform address')) {
+            throw new Error(
+              'That address is the platform escrow/treasury — funds would stay inside iMali. Paste an external wallet (e.g. MetaMask) to withdraw USDC on-chain.',
+            );
+          }
           if (msg.includes('USE_INTERNAL_TRANSFER') || msg.includes('iMali wallet')) {
             setResult(await executeTransfer({ to: to.trim(), amount, currency }, setPayStep));
           } else {

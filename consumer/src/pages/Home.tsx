@@ -7,6 +7,7 @@ import { useAppBrand } from '@/hooks/useAppBrand';
 
 interface Profile {
   ensSubdomain?: string;
+  countryCode?: string;
   kyc: { levelName: string; allowsUsdSavings: boolean; allowsRemittance: boolean };
 }
 interface BalanceSummary {
@@ -21,6 +22,11 @@ interface BalanceSummary {
 }
 
 type Leg = 'SPEND' | 'ZAR' | 'USDC';
+
+function flagEmoji(code: string): string {
+  if (!code || code.length !== 2) return '';
+  return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
 
 const SYMBOL: Record<string, string> = { ZAR: 'R', MWK: 'MK', USD: '$', USDC: '$' };
 function formatMoney(n: number, currency: string, symbolOverride?: string) {
@@ -87,7 +93,18 @@ export default function Home() {
 
   return (
     <div className="flex flex-col min-h-dvh pb-24 px-6 pt-14">
-      <p className="text-[2.8rem] leading-tight font-extrabold text-brand-accent text-center mb-4">{appName}</p>
+      <div className="flex items-center justify-center gap-3 mb-4">
+        <p className="text-[2.8rem] leading-tight font-extrabold text-brand-accent">{appName}</p>
+        {profile?.countryCode && flagEmoji(profile.countryCode) && (
+          <span
+            className="text-[2.4rem] leading-none select-none"
+            title={profile.countryCode}
+            aria-label={`Country ${profile.countryCode}`}
+          >
+            {flagEmoji(profile.countryCode)}
+          </span>
+        )}
+      </div>
 
       <div className="flex items-baseline justify-between mb-7">
         <p className="text-2xl font-bold text-white">{tag ? `@${tag}` : '—'}</p>
@@ -121,12 +138,13 @@ export default function Home() {
           <button
             onClick={() => navigate('/convert', {
               state: {
-                direction: hasSeparateZar ? 'zar-to-usd' : 'local-to-usd',
+                // Prefer local spend (e.g. MZN); Convert screen lets them pick Rand when both exist.
+                direction: 'local-to-usd',
                 localCurrency,
                 localSymbol,
               },
             })}
-            aria-label={hasSeparateZar ? 'Convert Rand to USD' : `Convert ${localCurrency} to USD`}
+            aria-label={`Convert ${localCurrency} to USD`}
             className="w-14 h-14 rounded-full bg-brand-accent text-white flex items-center justify-center shadow-lg border-2 border-brand-bg active:scale-90 transition-transform"
           >
             <DoubleChevron size={30} className="rotate-90" />
@@ -134,12 +152,12 @@ export default function Home() {
           <button
             onClick={() => navigate('/convert', {
               state: {
-                direction: hasSeparateZar ? 'usd-to-zar' : 'usd-to-local',
+                direction: 'usd-to-local',
                 localCurrency,
                 localSymbol,
               },
             })}
-            aria-label={hasSeparateZar ? 'Convert USD to Rand' : `Convert USD to ${localCurrency}`}
+            aria-label={`Convert USD to ${localCurrency}`}
             className="w-14 h-14 rounded-full bg-brand-accent text-white flex items-center justify-center shadow-lg border-2 border-brand-bg active:scale-90 transition-transform"
           >
             <DoubleChevron size={30} className="-rotate-90" />

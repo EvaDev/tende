@@ -191,8 +191,8 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
 // ── GET /api/member-auth/me ───────────────────────────────────────────────────
 router.get('/me', requireMemberAuth, async (req: Request, res: Response): Promise<void> => {
-  const r = await db.query<MemberRow & { merchant_name: string }>(
-    `SELECT mm.*, m.name AS merchant_name FROM merchant_members mm
+  const r = await db.query<MemberRow & { merchant_name: string; country_code: string }>(
+    `SELECT mm.*, m.name AS merchant_name, m.country_code FROM merchant_members mm
      JOIN merchants m ON m.merchant_id = mm.merchant_id WHERE mm.id = $1`,
     [req.member!.memberId],
   );
@@ -200,6 +200,7 @@ router.get('/me', requireMemberAuth, async (req: Request, res: Response): Promis
   const m = r.rows[0];
   res.json({
     memberId: m.id, merchantId: m.merchant_id, merchantName: m.merchant_name,
+    countryCode: m.country_code,
     email: m.email, displayName: m.display_name, role: m.role, status: m.status,
   });
 });

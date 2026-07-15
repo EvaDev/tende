@@ -23,6 +23,8 @@ export interface ProductBody {
   incursVat?: boolean;
   validityDays?: number | string | null;
   isActive?: boolean;
+  barcode?: string | null;
+  fulfilmentUrl?: string | null;
 }
 
 export function parseProductBody(body: ProductBody, partial: boolean): {
@@ -113,13 +115,22 @@ export function parseProductBody(body: ProductBody, partial: boolean): {
 
   if (body.isActive !== undefined) fields.is_active = !!body.isActive;
 
+  if (body.barcode !== undefined) {
+    fields.barcode = body.barcode ? String(body.barcode).trim() : null;
+  }
+
+  if (body.fulfilmentUrl !== undefined) {
+    fields.fulfilment_url = body.fulfilmentUrl ? String(body.fulfilmentUrl).trim() : null;
+  }
+
   return { fields };
 }
 
 export const PRODUCT_SELECT = `
   product_id AS id, name, description, delivery_type, is_fixed_price,
   price, min_price, max_price, incurs_vat, validity_days,
-  country_code, currency_code, icon_id, is_active, created_at
+  country_code, currency_code, icon_id, is_active, created_at,
+  barcode, fulfilment_url, source, external_product_id, supplier_api_code
 `;
 
 export function mapProductRow(row: Record<string, unknown>) {

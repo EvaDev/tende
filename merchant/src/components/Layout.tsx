@@ -17,6 +17,13 @@ const NAV = [
   { to: '/about',       label: 'About',         icon: Info },
 ];
 
+function flagEmoji(countryCode: string): string {
+  if (!/^[A-Z]{2}$/i.test(countryCode)) return '';
+  return String.fromCodePoint(
+    ...[...countryCode.toUpperCase()].map(char => 0x1f1e6 + char.charCodeAt(0) - 65),
+  );
+}
+
 export default function Layout() {
   const { member, loading, isOrgAdmin, signOut } = useMember();
   const merchantLogo = useMerchantLogo(!!member);
@@ -36,8 +43,19 @@ export default function Layout() {
       <aside className="w-56 flex-shrink-0 bg-brand-accent text-white flex flex-col">
         <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3">
           <img src={getAppLogo()} alt={getAppName()} className="w-9 h-9 object-contain flex-shrink-0" />
-          <div className="flex-1">
-            <span className="text-xl font-bold tracking-tight">{getAppName()}</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xl font-bold tracking-tight truncate">{getAppName()}</span>
+              {member.countryCode && (
+                <span
+                  className="text-2xl leading-none select-none shrink-0"
+                  title={member.countryCode}
+                  aria-label={`Country ${member.countryCode}`}
+                >
+                  {flagEmoji(member.countryCode)}
+                </span>
+              )}
+            </div>
             <span className="block text-xs text-white/50">Merchant</span>
           </div>
         </div>

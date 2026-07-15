@@ -258,17 +258,25 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
   try {
     const { getVaultClaimsBySegment, getTreasuryDashboardSummary } = await import('./platformStats.js');
     const { getProtocolFinancials } = await import('./platformFinancials.js');
-    const [merchants, consumers, pending, vaultClaims, treasurySummary, sales] = await Promise.all([
+    const { getWithdrawalSummary } = await import('./withdrawalService.js');
+    const { vaultBalanceOf } = await import('./treasuryService.js');
+    const escrowAddr = config.platform.escrowAddress;
+    const [merchants, consumers, pending, vaultClaims, treasurySummary, sales, withdrawals, escrowUsdcRaw] = await Promise.all([
       db.query<{ count: string }>('SELECT COUNT(*) as count FROM merchants'),
       db.query<{ count: string }>('SELECT COUNT(*) as count FROM consumers'),
       db.query<{ count: string }>('SELECT COUNT(*) as count FROM consumers WHERE kyc_level_id = 0 OR kyc_level_id IS NULL'),
       getVaultClaimsBySegment(),
       getTreasuryDashboardSummary(),
       db.query<{ total: string }>('SELECT COALESCE(SUM(amount), 0)::text AS total FROM merchant_sales'),
+      getWithdrawalSummary(),
+      escrowAddr
+        ? vaultBalanceOf(escrowAddr, 'USDC').catch(() => 0n)
+        : Promise.resolve(0n),
     ]);
     const consumerCount = parseInt(consumers.rows[0]?.count ?? '0');
     const financials = await getProtocolFinancials(consumerCount);
     const salesTotal = Number(sales.rows[0]?.total ?? 0);
+    const escrowUsdc = Number(escrowUsdcRaw) / 1e6;
     res.json({
       merchants:   parseInt(merchants.rows[0]?.count ?? '0'),
       consumers:   consumerCount,
@@ -277,10 +285,13 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       vaultClaims,
       financials,
       treasurySummary,
+      withdrawals,
+      escrowUsdc,
+      escrowUsdcDisplay: `$${escrowUsdc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       totalSalesDisplay: salesTotal > 0 ? `R${Math.round(salesTotal)}` : null,
     });
   } catch {
-    res.json({ merchants: 0, consumers: 0, pendingKyc: 0, totalVolume: 0, vaultClaims: null, financials: null, treasurySummary: null });
+    res.json({ merchants: 0, consumers: 0, pendingKyc: 0, totalVolume: 0, vaultClaims: null, financials: null, treasurySummary: null, withdrawals: null, escrowUsdc: 0 });
   }
 });
 
@@ -445,11 +456,48 @@ router.get('/consumers', async (_req: Request, res: Response): Promise<void> => 
 router.get('/countries', async (_req: Request, res: Response): Promise<void> => {
   try {
     const r = await db.query(
-      `SELECT country_code as code, name, currency_code, dial_code,
-              vat_rate_pct, is_active as send_enabled, is_active as receive_enabled
-       FROM countries ORDER BY country_code`,
+      `SELECT co.country_code AS code,
+              co.name,
+              co.currency_code,
+              co.dial_code,
+              co.vat_rate_pct,
+              co.is_active,
+              (EXISTS (
+                 SELECT 1
+                   FROM stablecoins s
+                   JOIN currencies cu ON cu.currency_code = s.internal_code
+                  WHERE cu.base_currency_code = co.currency_code
+                    AND s.is_treasury_token = TRUE
+                    AND s.is_deployed = TRUE
+                    AND s.contract_address IS NOT NULL
+               )) AS has_treasury_token,
+              (SELECT s.internal_code
+                 FROM stablecoins s
+                 JOIN currencies cu ON cu.currency_code = s.internal_code
+                WHERE cu.base_currency_code = co.currency_code
+                  AND s.is_treasury_token = TRUE
+                  AND s.is_deployed = TRUE
+                  AND s.contract_address IS NOT NULL
+                LIMIT 1) AS treasury_token
+         FROM countries co
+        ORDER BY co.name`,
     );
-    res.json(r.rows);
+    res.json(r.rows.map(row => {
+      const hasTreasury = Boolean(row.has_treasury_token);
+      const corridorOn = Boolean(row.is_active) && hasTreasury;
+      return {
+        code: row.code,
+        name: row.name,
+        currency_code: row.currency_code,
+        dial_code: row.dial_code,
+        vat_rate_pct: row.vat_rate_pct,
+        is_active: row.is_active,
+        has_treasury_token: hasTreasury,
+        treasury_token: row.treasury_token ?? null,
+        send_enabled: corridorOn,
+        receive_enabled: corridorOn,
+      };
+    }));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -457,17 +505,21 @@ router.get('/countries', async (_req: Request, res: Response): Promise<void> => 
 
 router.post('/countries', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code, name, currency_code, dial_code, send_enabled } = req.body as {
-      code: string; name: string; currency_code?: string; dial_code?: string; send_enabled?: boolean;
+    const { code, name, currency_code, dial_code, send_enabled, vat_rate_pct } = req.body as {
+      code: string; name: string; currency_code?: string; dial_code?: string;
+      send_enabled?: boolean; vat_rate_pct?: number;
     };
     const r = await db.query(
-      `INSERT INTO countries (country_code, name, currency_code, dial_code, is_active)
-       VALUES ($1,$2,$3,$4,$5)
+      `INSERT INTO countries (country_code, name, currency_code, dial_code, vat_rate_pct, is_active)
+       VALUES ($1,$2,$3,$4,COALESCE($5, 0),$6)
        ON CONFLICT (country_code) DO UPDATE
          SET name=$2, currency_code=COALESCE($3, countries.currency_code),
-             dial_code=COALESCE($4, countries.dial_code), is_active=$5
-       RETURNING country_code as code, name, currency_code, dial_code, is_active as send_enabled`,
-      [code.toUpperCase(), name, currency_code ?? 'USD', dial_code ?? '', send_enabled ?? true],
+             dial_code=COALESCE($4, countries.dial_code),
+             vat_rate_pct=COALESCE($5, countries.vat_rate_pct),
+             is_active=$6
+       RETURNING country_code as code, name, currency_code, dial_code, vat_rate_pct,
+                 is_active as send_enabled, is_active as receive_enabled`,
+      [code.toUpperCase(), name, currency_code ?? 'USD', dial_code ?? '', vat_rate_pct ?? null, send_enabled ?? true],
     );
     res.status(201).json(r.rows[0]);
   } catch (err) {
@@ -751,7 +803,17 @@ router.get('/treasury', allowPublicPage('treasury'), async (_req: Request, res: 
   }
   supplies.push({ token: 'USDC', label: 'Vault USDC', address: vaultAddr ?? '', decimals: 6, supply: vaultUsdc, kind: 'vault' });
 
-  res.json({ supplies, dev_tools: config.server.env !== 'production' });
+  const { getWithdrawalSummary, listExecutedWithdrawals } = await import('./withdrawalService.js');
+  const [withdrawalSummary, withdrawalRows] = await Promise.all([
+    getWithdrawalSummary(),
+    listExecutedWithdrawals(50).catch(() => []),
+  ]);
+
+  res.json({
+    supplies,
+    withdrawals: { summary: withdrawalSummary, rows: withdrawalRows },
+    dev_tools: config.server.env !== 'production',
+  });
 });
 
 // ── Dev cash-in (POC ONLY — must not ship to production) ──────────────────────
@@ -855,17 +917,42 @@ router.post('/consumers/kyc-level', requireAdmin, async (req: Request, res: Resp
     const tx       = await consumer.updateKycLevel(recipient, lvl);
     const receipt  = await tx.wait() as ethers.TransactionReceipt;
 
-    // Mirror into the DB so /consumer/me reflects it (best-effort level→kyc_levels map).
-    await db.query(
+    // Mirror into the DB so /consumer/me reflects it. Requires kyc_levels rows for the
+    // consumer's country (seeded per country — ZA-only previously left MZ/etc. NULL).
+    const mirrored = await db.query<{ kyc_level_id: number | null; country_code: string }>(
       `UPDATE consumers
          SET kyc_level_id = (SELECT level_id FROM kyc_levels
-                             WHERE country_code = consumers.country_code AND level_name LIKE $2 LIMIT 1),
+                             WHERE country_code = consumers.country_code AND level_name LIKE $2
+                             ORDER BY level_id LIMIT 1),
              updated_at = NOW()
-       WHERE LOWER(wallet_address) = LOWER($1)`,
+       WHERE LOWER(wallet_address) = LOWER($1)
+       RETURNING kyc_level_id, country_code`,
       [recipient, `Level ${lvl}%`],
     );
+    const row = mirrored.rows[0];
+    if (!row) {
+      res.status(404).json({
+        error: 'On-chain KYC updated but no consumer DB row matched that wallet',
+        wallet: recipient, level: lvl, txHash: receipt.hash,
+      });
+      return;
+    }
+    if (row.kyc_level_id == null) {
+      res.status(400).json({
+        error: `On-chain KYC set to Level ${lvl}, but no "Level ${lvl}…" tier exists for country ${row.country_code}. Configure tiers in Settings → Country Remittance Limits, or run db/042_kyc_levels_all_countries.sql.`,
+        wallet: recipient, level: lvl, countryCode: row.country_code, txHash: receipt.hash,
+      });
+      return;
+    }
 
-    res.json({ success: true, wallet: recipient, level: lvl, txHash: receipt.hash });
+    res.json({
+      success: true,
+      wallet: recipient,
+      level: lvl,
+      kycLevelId: row.kyc_level_id,
+      countryCode: row.country_code,
+      txHash: receipt.hash,
+    });
   } catch (err) {
     console.error('[POST /api/admin/consumers/kyc-level]', err);
     res.status(500).json({ error: (err as Error).message });
@@ -887,36 +974,108 @@ router.post('/claims/reclaim-expired', requireAdmin, async (_req: Request, res: 
 });
 
 // ── GET /api/admin/escrow ─────────────────────────────────────────────────────
-// Visibility over WhatsApp-escrow holdings. Value sits on-chain at the platform
-// escrow address (commingled with the owner wallet); pending_claims is the
-// breakdown. Surfaces each claim + the outstanding liability (still-pending value)
-// per currency. requireAdmin via the router-level guard (not a public read).
+// Visibility over the platform escrow wallet: live Vault balances, WhatsApp
+// pending_claims, purchase holds (merchant_sales pending_fulfilment), and ledger
+// transfers into escrow (so unallocated P2P → escrow shows up, not just claims).
 router.get('/escrow', async (_req: Request, res: Response): Promise<void> => {
   try {
-    const dec  = (cur: string) => (cur.toUpperCase() === 'USDC' || cur.toUpperCase() === 'USD' ? 6 : 2);
-    const fmt  = (raw: string, cur: string) => ethers.formatUnits(BigInt(raw), dec(cur));
-    // Mask the beneficiary phone for the ops view (keep prefix + last 2 digits).
+    const { vaultBalanceOf } = await import('./treasuryService.js');
+    const escrowAddress = (process.env['ESCROW_ADDRESS'] ?? config.platform?.escrowAddress ?? '').toLowerCase();
+    if (!escrowAddress || !/^0x[0-9a-f]{40}$/.test(escrowAddress)) {
+      res.status(500).json({ error: 'Escrow address not configured' }); return;
+    }
+
+    const dec = (cur: string) => (cur.toUpperCase() === 'USDC' || cur.toUpperCase() === 'USD' ? 6 : 2);
+    const fmt = (raw: string | bigint, cur: string) => ethers.formatUnits(BigInt(raw), dec(cur));
     const mask = (p: string) => {
       const s = String(p ?? '');
       if (s.length <= 5) return s;
       return `${s.slice(0, 3)}••••${s.slice(-2)}`;
     };
+    const CURRENCY_BY_HASH: Record<string, string> = {};
+    for (const code of ['ZAR', 'USDC', 'USD', 'ZWL', 'MWK']) {
+      CURRENCY_BY_HASH[ethers.id(code).toLowerCase()] = code;
+    }
+    const decodeCurrency = (hash: unknown): string => {
+      const h = String(hash ?? '').toLowerCase();
+      return CURRENCY_BY_HASH[h] ?? 'UNKNOWN';
+    };
 
-    const rows = (await db.query<{
-      id: string; sender_wallet: string; recipient_phone: string; amount: string;
-      currency: string; status: string; escrow_tx: string | null; release_tx: string | null;
-      expires_at: string; created_at: string;
-    }>(
-      `SELECT id, sender_wallet, recipient_phone, amount, currency, status,
-              escrow_tx, release_tx, expires_at, created_at
-         FROM pending_claims
-        ORDER BY created_at DESC
-        LIMIT 200`,
-    )).rows;
+    const cashCodes = Array.from(new Set(['ZAR', 'USDC', ...config.platform.cashCurrencies]));
 
-    const claims = rows.map(r => ({
+    const [heldBalances, claimRows, purchaseRows, inboundRows, labels] = await Promise.all([
+      Promise.all(cashCodes.map(async (code) => {
+        try {
+          const raw = await vaultBalanceOf(escrowAddress, code);
+          if (raw <= 0n) return null;
+          const displayCur = code === 'USDC' ? 'USD' : code;
+          return {
+            currency: displayCur,
+            amount: fmt(raw, code),
+            amountValue: Number(ethers.formatUnits(raw, dec(code))),
+          };
+        } catch { return null; }
+      })).then(rows => rows.filter(Boolean) as { currency: string; amount: string; amountValue: number }[]),
+
+      db.query<{
+        id: string; sender_wallet: string; recipient_phone: string; amount: string;
+        currency: string; status: string; escrow_tx: string | null; release_tx: string | null;
+        expires_at: string; created_at: string;
+      }>(
+        `SELECT id, sender_wallet, recipient_phone, amount, currency, status,
+                escrow_tx, release_tx, expires_at, created_at
+           FROM pending_claims
+          ORDER BY created_at DESC
+          LIMIT 200`,
+      ).then(r => r.rows).catch(() => [] as never[]),
+
+      db.query<{
+        sale_id: string; consumer_wallet: string; merchant_name: string; amount: string;
+        currency: string; status: string; fulfilment_status: string | null;
+        escrow_tx: string | null; tx_hash: string | null; created_at: Date;
+      }>(
+        `SELECT s.sale_id::text, s.consumer_wallet, m.name AS merchant_name, s.amount::text, s.currency,
+                s.status, s.fulfilment_status, s.escrow_tx, s.tx_hash, s.created_at
+           FROM merchant_sales s
+           JOIN merchants m ON m.merchant_id = s.merchant_id
+          WHERE s.status = 'pending_fulfilment'
+             OR (s.escrow_tx IS NOT NULL AND s.created_at > NOW() - INTERVAL '30 days')
+          ORDER BY s.created_at DESC
+          LIMIT 100`,
+      ).then(r => r.rows).catch(() => [] as never[]),
+
+      db.query<{
+        tx_hash: string; block_time: Date | null; from_addr: string; amount: string; currency_hash: string;
+      }>(
+        `SELECT tx_hash, block_time,
+                LOWER(args->>'from') AS from_addr,
+                args->>'amount' AS amount,
+                args->>'currencyCode' AS currency_hash
+           FROM chain_events
+          WHERE event_name = 'Transferred'
+            AND LOWER(args->>'to') = $1
+          ORDER BY block_time DESC NULLS LAST
+          LIMIT 100`,
+        [escrowAddress],
+      ).then(r => r.rows).catch(() => [] as never[]),
+
+      (async () => {
+        const map = new Map<string, string>();
+        const cons = await db.query<{ wallet_address: string; ens_subdomain: string | null; display_name: string | null }>(
+          `SELECT wallet_address, ens_subdomain, display_name FROM consumers`,
+        ).catch(() => ({ rows: [] as { wallet_address: string; ens_subdomain: string | null; display_name: string | null }[] }));
+        for (const c of cons.rows) {
+          const label = c.display_name || (c.ens_subdomain ? `@${c.ens_subdomain}` : `${c.wallet_address.slice(0, 6)}…${c.wallet_address.slice(-4)}`);
+          map.set(c.wallet_address.toLowerCase(), label);
+        }
+        return map;
+      })(),
+    ]);
+
+    const claims = claimRows.map(r => ({
       id: r.id,
-      sender: `${r.sender_wallet.slice(0, 6)}…${r.sender_wallet.slice(-4)}`,
+      sender: labels.get(r.sender_wallet.toLowerCase())
+        ?? `${r.sender_wallet.slice(0, 6)}…${r.sender_wallet.slice(-4)}`,
       recipientMasked: mask(r.recipient_phone),
       amount: fmt(r.amount, r.currency),
       currency: r.currency.toUpperCase() === 'USDC' ? 'USD' : r.currency.toUpperCase(),
@@ -928,26 +1087,84 @@ router.get('/escrow', async (_req: Request, res: Response): Promise<void> => {
       expired: r.status === 'pending' && new Date(r.expires_at).getTime() < Date.now(),
     }));
 
-    // Outstanding liability = still-pending value, summed per currency (raw units).
-    const totalsRaw: Record<string, bigint> = {};
-    for (const r of rows) {
+    // WhatsApp pending liability (subset of held that has a claim record).
+    const whatsappTotals: Record<string, bigint> = {};
+    for (const r of claimRows) {
       if (r.status !== 'pending') continue;
       const c = r.currency.toUpperCase() === 'USDC' ? 'USD' : r.currency.toUpperCase();
-      totalsRaw[c] = (totalsRaw[c] ?? 0n) + BigInt(r.amount);
+      whatsappTotals[c] = (whatsappTotals[c] ?? 0n) + BigInt(r.amount);
     }
-    const outstanding = Object.entries(totalsRaw).map(([currency, raw]) => ({
+    const whatsappOutstanding = Object.entries(whatsappTotals).map(([currency, raw]) => ({
       currency, amount: ethers.formatUnits(raw, currency === 'USD' ? 6 : 2),
     }));
 
+    const claimByTx = new Map<string, typeof claimRows[0]>();
+    for (const r of claimRows) {
+      if (r.escrow_tx) claimByTx.set(r.escrow_tx.toLowerCase(), r);
+    }
+    const saleByTx = new Map<string, typeof purchaseRows[0]>();
+    for (const s of purchaseRows) {
+      if (s.escrow_tx) saleByTx.set(s.escrow_tx.toLowerCase(), s);
+      if (s.tx_hash) saleByTx.set(s.tx_hash.toLowerCase(), s);
+    }
+
+    const purchasesPending = purchaseRows.filter(s => s.status === 'pending_fulfilment');
+
+    const ledger = inboundRows.map(r => {
+      const currencyRaw = decodeCurrency(r.currency_hash);
+      const currency = currencyRaw === 'USDC' ? 'USD' : currencyRaw;
+      const amount = fmt(r.amount ?? '0', currencyRaw);
+      const tx = r.tx_hash.toLowerCase();
+      const claim = claimByTx.get(tx);
+      const sale = saleByTx.get(tx);
+      let kind: 'whatsapp' | 'purchase' | 'unallocated' = 'unallocated';
+      let detail = 'Unallocated hold at escrow';
+      if (claim) {
+        kind = 'whatsapp';
+        detail = `WhatsApp claim → ${mask(claim.recipient_phone)} (${claim.status})`;
+      } else if (sale) {
+        kind = 'purchase';
+        detail = `Purchase → ${sale.merchant_name} (${sale.fulfilment_status ?? sale.status})`;
+      }
+      return {
+        kind,
+        detail,
+        from: r.from_addr,
+        fromLabel: labels.get(r.from_addr) ?? `${r.from_addr.slice(0, 6)}…${r.from_addr.slice(-4)}`,
+        amount,
+        currency,
+        txHash: r.tx_hash,
+        createdAt: r.block_time ? new Date(r.block_time).toISOString() : null,
+      };
+    });
+
     res.json({
-      escrowAddress: process.env['ESCROW_ADDRESS'] ?? config.platform?.escrowAddress ?? null,
+      escrowAddress,
       counts: {
-        pending:   rows.filter(r => r.status === 'pending').length,
-        claimed:   rows.filter(r => r.status === 'claimed').length,
-        reclaimed: rows.filter(r => r.status === 'reclaimed').length,
+        pending: claimRows.filter(r => r.status === 'pending').length,
+        claimed: claimRows.filter(r => r.status === 'claimed').length,
+        reclaimed: claimRows.filter(r => r.status === 'reclaimed').length,
+        purchasesPending: purchasesPending.length,
       },
-      outstanding,
+      /** Live Vault balances at the escrow address (source of truth for held value). */
+      held: heldBalances,
+      /** Alias for older UI — now live holdings, not only WhatsApp pending. */
+      outstanding: heldBalances.map(({ currency, amount }) => ({ currency, amount })),
+      whatsappOutstanding,
       claims,
+      purchasesPending: purchasesPending.map(s => ({
+        saleId: s.sale_id,
+        from: s.consumer_wallet,
+        fromLabel: labels.get(s.consumer_wallet.toLowerCase())
+          ?? `${s.consumer_wallet.slice(0, 6)}…${s.consumer_wallet.slice(-4)}`,
+        merchantName: s.merchant_name,
+        amount: Number(s.amount).toFixed(2),
+        currency: s.currency.toUpperCase() === 'USDC' ? 'USD' : s.currency.toUpperCase(),
+        fulfilmentStatus: s.fulfilment_status,
+        escrowTx: s.escrow_tx ?? s.tx_hash,
+        createdAt: s.created_at instanceof Date ? s.created_at.toISOString() : String(s.created_at),
+      })),
+      ledger,
     });
   } catch (err) {
     console.error('[GET /api/admin/escrow]', err);

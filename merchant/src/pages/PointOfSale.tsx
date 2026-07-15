@@ -104,7 +104,7 @@ export default function PointOfSale() {
           ? savedId
           : (headOffice && isOrgAdmin ? headOffice.id : storeRows[0]?.id);
         const cur = (storeRows.find(s => s.id === activeId)?.currencyCode ?? 'ZAR').toUpperCase();
-        setProducts(all.filter(p => p.is_active !== false && p.delivery_type === 'DIRECT' && p.currency_code.toUpperCase() === cur));
+        setProducts(all.filter(p => p.is_active !== false && p.currency_code.toUpperCase() === cur));
         const vouchers = all.filter(p => p.is_active !== false && p.delivery_type === 'VOUCHER' && p.currency_code.toUpperCase() === cur);
         setVoucherProducts(vouchers);
         if (vouchers.length && !changeProductId) setChangeProductId(vouchers[0].id);
@@ -120,7 +120,7 @@ export default function PointOfSale() {
     const cur = activeStore.currencyCode.toUpperCase();
     apiFetch<Product[]>('/api/merchant/me/products')
       .then(all => {
-        setProducts(all.filter(p => p.is_active !== false && p.delivery_type === 'DIRECT' && p.currency_code.toUpperCase() === cur));
+        setProducts(all.filter(p => p.is_active !== false && p.currency_code.toUpperCase() === cur));
         const vouchers = all.filter(p => p.is_active !== false && p.delivery_type === 'VOUCHER' && p.currency_code.toUpperCase() === cur);
         setVoucherProducts(vouchers);
         setCart({});

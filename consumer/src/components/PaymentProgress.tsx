@@ -81,3 +81,21 @@ export const PAYMENT_STEPS: PaymentStep[] = [
   { id: 'relay',   label: 'Submitting on-chain' },
   { id: 'done',    label: 'Confirmed' },
 ];
+
+/** Buy / product purchase — includes escrow hold + fulfilment. */
+export const PURCHASE_STEPS: PaymentStep[] = [
+  { id: 'prepare', label: 'Preparing payment' },
+  { id: 'sign',    label: 'Approve with passkey' },
+  { id: 'relay',   label: 'Submitting on-chain' },
+  { id: 'escrow',  label: 'Holding funds in escrow' },
+  { id: 'fulfil',  label: 'Completing fulfilment' },
+  { id: 'done',    label: 'Confirmed' },
+];
+
+/** FX conversion (USD ↔ local). */
+export const CONVERT_STEPS: PaymentStep[] = [
+  { id: 'prepare', label: 'Preparing conversion' },
+  { id: 'rate',    label: 'Confirming exchange rate' },
+  { id: 'settle',  label: 'Settling balances' },
+  { id: 'done',    label: 'Confirmed' },
+];

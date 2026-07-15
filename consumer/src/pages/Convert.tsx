@@ -3,10 +3,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, ArrowDown, X } from 'lucide-react';
 import { DoubleChevron } from '@/components/DoubleChevron';
 import { InfoButton } from '@/components/InfoButton';
+import PaymentProgress, { CONVERT_STEPS } from '@/components/PaymentProgress';
 import { api } from '@/lib/api';
 
 type State = 'idle' | 'loading' | 'success' | 'error';
 type Direction = 'local-to-usd' | 'usd-to-local' | 'zar-to-usd' | 'usd-to-zar';
+type ConvertStep = 'prepare' | 'rate' | 'settle' | 'done';
 
 const ALLOWED_DIRECTIONS = new Set<Direction>([
   'local-to-usd', 'usd-to-local', 'zar-to-usd', 'usd-to-zar',
@@ -28,8 +30,8 @@ interface ConvertResult {
   rate: number; spreadBps: number;
 }
 
-const SYMBOL: Record<string, string> = { ZAR: 'R', MWK: 'MK', USD: '$', USDC: '$' };
-const NAMES: Record<string, string> = { ZAR: 'Rand', MWK: 'Kwacha', USD: 'USD' };
+const SYMBOL: Record<string, string> = { ZAR: 'R', MWK: 'MK', MZN: 'MZN', USD: '$', USDC: '$' };
+const NAMES: Record<string, string> = { ZAR: 'Rand', MWK: 'Kwacha', MZN: 'Metical', USD: 'USD' };
 
 function money(n: number, currency: string, symbolOverride?: string) {
   const num = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
@@ -39,6 +41,15 @@ function money(n: number, currency: string, symbolOverride?: string) {
 
 function localName(currency: string): string {
   return NAMES[currency.toUpperCase()] ?? currency.toUpperCase();
+}
+
+function sleep(ms: number) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function fiatFromDirection(direction: Direction, localCurrency: string): string {
+  if (direction === 'zar-to-usd' || direction === 'usd-to-zar') return 'ZAR';
+  return localCurrency;
 }
 
 export default function Convert() {
@@ -51,42 +62,57 @@ export default function Convert() {
     : 'local-to-usd';
   const localToUsd = direction === 'local-to-usd' || direction === 'zar-to-usd';
   const initialLocal = navState?.localCurrency ?? 'ZAR';
-  const fromFiat = direction === 'zar-to-usd' || direction === 'usd-to-zar' ? 'ZAR' : initialLocal;
 
   const [localCurrency, setLocalCurrency] = useState(initialLocal);
   const [localSymbol, setLocalSymbol]     = useState(navState?.localSymbol ?? 'R');
+  const [fiatCode, setFiatCode]           = useState(() => fiatFromDirection(direction, initialLocal));
   const [spendAvail, setSpendAvail]       = useState<number | null>(null);
   const [zarAvail, setZarAvail]           = useState<number | null>(null);
   const [usdAvail, setUsdAvail]           = useState<number | null>(null);
   const [rate, setRate]                   = useState<number | null>(null);
   const [amount, setAmount]               = useState('');
   const [state, setState]                 = useState<State>('idle');
+  const [convertStep, setConvertStep]     = useState<ConvertStep | null>(null);
   const [error, setError]                 = useState('');
   const [result, setResult]               = useState<ConvertResult | null>(null);
+
+  const canChooseZar = localCurrency.toUpperCase() !== 'ZAR';
 
   useEffect(() => {
     api.get<{ summary: BalanceSummary }>('/consumer/balance')
       .then(b => {
         const s = b.summary;
-        if (s?.localCurrency) setLocalCurrency(s.localCurrency);
+        if (s?.localCurrency) {
+          setLocalCurrency(s.localCurrency);
+          // Keep user's fiat choice unless balance load reveals local is ZAR-only.
+          setFiatCode(prev => {
+            if (s.localCurrency.toUpperCase() === 'ZAR') return 'ZAR';
+            if (prev === 'ZAR' || prev.toUpperCase() === s.localCurrency.toUpperCase()) return prev;
+            return fiatFromDirection(direction, s.localCurrency);
+          });
+        }
         if (s?.localSymbol) setLocalSymbol(s.localSymbol);
         setSpendAvail(parseFloat(s?.spend?.formatted ?? '0'));
         setZarAvail(parseFloat(s?.zar?.formatted ?? '0'));
         setUsdAvail(parseFloat(s?.usd.formatted ?? '0'));
       }).catch(() => {});
-    const from = localToUsd ? fromFiat : 'USD';
-    const to   = localToUsd ? 'USD' : fromFiat;
+  }, [direction]);
+
+  useEffect(() => {
+    const from = localToUsd ? fiatCode : 'USD';
+    const to   = localToUsd ? 'USD' : fiatCode;
+    setRate(null);
     api.get<FxQuote>(`/fx/rate?from=${from}&to=${to}`).then(q => setRate(q.rate)).catch(() => {});
-  }, [localToUsd, localCurrency, fromFiat]);
+  }, [localToUsd, fiatCode]);
 
   const amt      = parseFloat(amount || '0');
   const sourceAvail = localToUsd
-    ? (fromFiat === 'ZAR' ? zarAvail : spendAvail)
+    ? (fiatCode === 'ZAR' ? zarAvail : spendAvail)
     : usdAvail;
   const estOut   = rate != null && amt > 0 ? amt * rate * (1 - 0.015) : 0;
   const tooMuch  = sourceAvail != null && amt > sourceAvail;
-  const spendName = localName(fromFiat);
-  const fromSymbol = fromFiat === localCurrency ? localSymbol : SYMBOL[fromFiat];
+  const spendName = localName(fiatCode);
+  const fromSymbol = fiatCode === localCurrency ? localSymbol : SYMBOL[fiatCode];
 
   async function convert() {
     if (!(amt > 0)) { setError('Enter an amount'); return; }
@@ -96,15 +122,22 @@ export default function Convert() {
         : 'Amount exceeds your USD balance');
       return;
     }
-    setState('loading'); setError('');
+    setState('loading'); setError(''); setConvertStep('prepare');
     try {
+      await sleep(250);
+      setConvertStep('rate');
+      await sleep(250);
+      setConvertStep('settle');
       const body = localToUsd
-        ? { amount: amount.trim(), from: fromFiat, to: 'USD' }
-        : { amount: amount.trim(), from: 'USD', to: fromFiat };
+        ? { amount: amount.trim(), from: fiatCode, to: 'USD' }
+        : { amount: amount.trim(), from: 'USD', to: fiatCode };
       const r = await api.post<ConvertResult>('/consumer/convert', body);
+      setConvertStep('done');
       setResult(r); setState('success');
     } catch (e) {
       setError((e as Error).message); setState('error');
+    } finally {
+      setConvertStep(null);
     }
   }
 
@@ -112,10 +145,25 @@ export default function Convert() {
     ? `Convert ${spendName} to USD`
     : `Convert USD to ${spendName}`;
   const fromLabel = localToUsd ? `Amount (${spendName})` : 'Amount (USD)';
-  const outCurrency = localToUsd ? 'USD' : fromFiat;
+  const outCurrency = localToUsd ? 'USD' : fiatCode;
   const rateLabel = localToUsd
-    ? (rate != null ? `${rate.toFixed(4)} $/${fromSymbol || fromFiat}` : '—')
-    : (rate != null ? `${rate.toFixed(2)} ${fromSymbol || fromFiat}/$` : '—');
+    ? (rate != null ? `${rate.toFixed(4)} $/${fromSymbol || fiatCode}` : '—')
+    : (rate != null ? `${rate.toFixed(2)} ${fromSymbol || fiatCode}/$` : '—');
+
+  if (state === 'loading' && convertStep) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center px-6 bg-brand-bg">
+        <div className="w-full max-w-sm bg-brand-card rounded-2xl p-5 shadow-xl">
+          <PaymentProgress
+            steps={CONVERT_STEPS}
+            currentId={convertStep}
+            title={title}
+            hint="Debiting one balance and crediting the other on-chain."
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (state === 'success' && result) {
     return (
@@ -159,11 +207,43 @@ export default function Convert() {
           </div>
         </div>
 
+        {canChooseZar && (
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold text-brand-accent">
+              {localToUsd ? 'Convert from' : 'Convert to'}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {([localCurrency, 'ZAR'] as const).map(code => {
+                const selected = fiatCode.toUpperCase() === code.toUpperCase();
+                return (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => {
+                      setFiatCode(code);
+                      setAmount('');
+                      setError('');
+                      setState('idle');
+                    }}
+                    className={`rounded-xl py-2.5 text-sm font-semibold transition-colors ${
+                      selected
+                        ? 'bg-brand-accent text-brand-text'
+                        : 'bg-white border border-brand-accent/20 text-brand-accent'
+                    }`}
+                  >
+                    {localName(code)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="space-y-1">
           <label className="block text-xs font-semibold text-brand-accent">{fromLabel}</label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-accent/50 font-semibold">
-              {localToUsd ? (fromSymbol || fromFiat) : '$'}
+              {localToUsd ? (fromSymbol || fiatCode) : '$'}
             </span>
             <input
               type="text" inputMode="decimal" placeholder="0.00" value={amount}
@@ -173,7 +253,7 @@ export default function Convert() {
           </div>
           {sourceAvail != null && (
             <p className="text-xs text-brand-accent/60 px-1">
-              Available: {money(sourceAvail, localToUsd ? fromFiat : 'USD', localToUsd ? fromSymbol : undefined)}
+              Available: {money(sourceAvail, localToUsd ? fiatCode : 'USD', localToUsd ? fromSymbol : undefined)}
               <button type="button" onClick={() => setAmount(String(sourceAvail))} className="ml-2 underline text-brand-accent">Max</button>
             </p>
           )}

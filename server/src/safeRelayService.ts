@@ -131,6 +131,8 @@ export async function relaySafeTx(params: {
   ownerSignerAddress: string;
   safeTx: SafeTx;
   assertion: RawAssertion;
+  /** Gas report source tag (default: passkey payment). */
+  gasSource?: string;
 }): Promise<string> {
   const wallet = backendWallet();
   const safe = new ethers.Contract(params.safeAddress, SAFE_ABI, wallet);
@@ -144,7 +146,7 @@ export async function relaySafeTx(params: {
     t.baseGas, t.gasPrice, t.gasToken, t.refundReceiver, signatures,
   );
   const receipt = await tx.wait() as ethers.TransactionReceipt;
-  await recordGasFromReceipt(receipt, 'relay');
+  await recordGasFromReceipt(receipt, params.gasSource ?? 'passkey');
   return receipt.hash;
 }
 
@@ -361,6 +363,6 @@ export async function relaySessionTransfer(params: {
     params.signature,
   );
   const receipt = await tx.wait() as ethers.TransactionReceipt;
-  await recordGasFromReceipt(receipt, 'relay');
+  await recordGasFromReceipt(receipt, 'session');
   return receipt.hash;
 }

@@ -7,6 +7,7 @@ import fxService from './fxService.js';
 import { getHarvestableYield } from './treasuryService.js';
 import config from './config.js';
 import { ethers } from 'ethers';
+import { getWithdrawalSummary } from './withdrawalService.js';
 
 const WETH_MAINNET = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
 
@@ -56,6 +57,11 @@ export interface ProtocolFinancials {
   settlementFeesZar: number;
   settlementFeesDisplay: string;
   settlementCount: number;
+  withdrawalFeesZar: number;
+  withdrawalFeesDisplay: string;
+  withdrawalCount: number;
+  withdrawalNetUsdc: number;
+  withdrawalNetDisplay: string;
   expensesZar: number;
   expensesDisplay: string;
   cacExpensesZar: number;
@@ -156,7 +162,7 @@ async function anyHarvestDue(): Promise<boolean> {
 }
 
 export async function getProtocolFinancials(completedConsumers = 0): Promise<ProtocolFinancials> {
-  const [convFeesZar, yieldRev, gas, conversionCountRow, settlementRow, harvestDue] = await Promise.all([
+  const [convFeesZar, yieldRev, gas, conversionCountRow, settlementRow, harvestDue, withdrawals] = await Promise.all([
     sumConversionFeesZar(),
     db.query<{ total: string }>(
       `SELECT COALESCE(SUM((args->>'platformCut')::numeric), 0)::text AS total
@@ -171,6 +177,7 @@ export async function getProtocolFinancials(completedConsumers = 0): Promise<Pro
          FROM settlement_requests WHERE status = 'executed'`,
     ).catch(() => ({ rows: [{ total: '0', n: '0' }] })),
     anyHarvestDue(),
+    getWithdrawalSummary(),
   ]);
 
   const conversionFeesZar = convFeesZar;
@@ -179,15 +186,21 @@ export async function getProtocolFinancials(completedConsumers = 0): Promise<Pro
   const settlementCount = Number(settlementRow.rows[0]?.n ?? 0);
   const yieldRevZar = await yieldRevenueZar();
   const yieldRevenueMinor = Number(yieldRev.rows[0]?.total ?? 0);
-  const revenueZar = conversionFeesZar + settlementFeesZar + yieldRevZar;
-
-  const onboardingEth = await getSuccessfulOnboardingGasEth();
-  const catCount = (c: string) => gas.byCategory.find(x => x.category === c)?.count ?? 0;
-  const transactionEth = gas.byCategory.find(c => c.category === 'transaction')?.totalEth ?? 0;
-  const operationsEth = gas.byCategory.find(c => c.category === 'operations')?.totalEth ?? 0;
-  const deploymentEth = gas.byCategory.find(c => c.category === 'deployment')?.totalEth ?? 0;
 
   const { zar: expensesZar, ethUsd, usdPerZar } = await ethToZar(gas.totalEth);
+  const withdrawalFeesZar = (usdPerZar && usdPerZar > 0)
+    ? withdrawals.feeUsdc / usdPerZar
+    : 0;
+  const revenueZar = conversionFeesZar + settlementFeesZar + yieldRevZar + withdrawalFeesZar;
+
+  const onboardingEth = await getSuccessfulOnboardingGasEth();
+  const catRows = (c: string) => gas.byCategory.filter(x => x.category === c);
+  const catCount = (c: string) => catRows(c).reduce((s, x) => s + x.count, 0);
+  const catEth = (c: string) => catRows(c).reduce((s, x) => s + x.totalEth, 0);
+  const transactionEth = catEth('transaction');
+  const operationsEth = catEth('operations');
+  const deploymentEth = catEth('deployment');
+
   const { zar: cacExpensesZar } = await ethToZar(onboardingEth);
   const { zar: transactionGasZar } = await ethToZar(transactionEth);
   const { zar: operationsGasZar } = await ethToZar(operationsEth);
@@ -208,6 +221,11 @@ export async function getProtocolFinancials(completedConsumers = 0): Promise<Pro
     settlementFeesZar,
     settlementFeesDisplay: formatZarApprox(settlementFeesZar),
     settlementCount,
+    withdrawalFeesZar,
+    withdrawalFeesDisplay: formatZarApprox(withdrawalFeesZar),
+    withdrawalCount: withdrawals.count,
+    withdrawalNetUsdc: withdrawals.netUsdc,
+    withdrawalNetDisplay: withdrawals.netDisplay,
     expensesZar,
     expensesDisplay: formatZarApprox(expensesZar),
     cacExpensesZar,

@@ -20,6 +20,8 @@ export const config = {
     env:      optional('NODE_ENV', 'development'),
     port:     parseInt(optional('PORT', '3001')),
     logLevel: optional('LOG_LEVEL', 'info'),
+    // Absolute base used when composing mock fulfilment / catalog URLs stored on products.
+    publicApiBase: optional('PUBLIC_API_BASE', `http://localhost:${optional('PORT', '3001')}`),
   },
 
   // Allowed browser origins for credentialed API calls in production.

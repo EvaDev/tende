@@ -1,0 +1,988 @@
+{
+  "status": {
+    "id": 0,
+    "message": "Success",
+    "errors": null
+  },
+  "data": {
+    "items": [
+      {
+        "pimId": 1,
+        "publishedByUser": "Kwande.skaap@flash.co.za",
+        "publishedDate": "2026-03-11T11:23:03.3250625",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-03-11T11:23:03.3251316",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "5.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009900416878"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 2,
+        "publishedByUser": "Kwande.skaap@flash.co.za",
+        "publishedDate": "2026-03-11T11:23:03.3818823",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-03-11T11:23:03.3818841",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009900416861"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 3,
+        "publishedByUser": "Kwande.skaap@flash.co.za",
+        "publishedDate": "2026-03-11T11:23:03.4035831",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-03-11T11:23:03.4035847",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "10.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009900416885"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 4,
+        "publishedByUser": "Kwande.skaap@flash.co.za",
+        "publishedDate": "2026-03-11T11:23:03.4258604",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-03-11T11:23:03.4258621",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "20.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009900416892"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 5,
+        "publishedByUser": "Kwande.skaap@flash.co.za",
+        "publishedDate": "2026-03-11T11:23:03.4513315",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-03-11T11:23:03.4513333",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "50.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009900416700"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 6,
+        "publishedByUser": "Kwande.skaap@flash.co.za",
+        "publishedDate": "2026-03-11T11:23:03.4725414",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-03-11T11:23:03.4725429",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "100.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009900416717"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 7,
+        "publishedByUser": "Kwande.skaap@flash.co.za",
+        "publishedDate": "2026-03-11T11:23:03.5008515",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-03-11T11:23:03.5008536",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "150.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009900416724"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 8,
+        "publishedByUser": "Kwande.skaap@flash.co.za",
+        "publishedDate": "2026-03-11T11:23:03.5268218",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-03-11T11:23:03.5268239",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "200.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009900416731"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 9,
+        "publishedByUser": "Kwande.skaap@flash.co.za",
+        "publishedDate": "2026-03-11T11:23:03.5528029",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-03-11T11:23:03.552805",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "250.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009900416748"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 10,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-05T12:43:56.4228563",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-05T12:43:56.4229154",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "25.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009712722686"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 11,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-05T12:43:56.4797646",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-05T12:43:56.4797666",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "30.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009897124961"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 12,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-05T12:43:56.4999976",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-05T12:43:56.4999994",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "300.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009712722693"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 13,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-05T12:43:56.5195903",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-05T12:43:56.5195923",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "500.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009712722709"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 14,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-05T12:43:56.5358401",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-05T12:43:56.5358417",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "70.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009712728510"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 15,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-05T12:43:56.5510505",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-05T12:43:56.5510521",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "75.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009712728527"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 16,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-05T12:43:56.5665317",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-05T12:43:56.5665334",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "1000.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009712728534"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 17,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-05T12:43:56.5896728",
+        "isActive": true,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-05T12:43:56.5897448",
+        "baseProduct": {
+          "name": "1Voucher",
+          "manufacturer": "Flash Mobile Vending",
+          "brand": "1Voucher",
+          "productCategory": "eVoucher",
+          "validityType": "Predefined Expiry",
+          "validityValue": null,
+          "metricType": "Digital Currency",
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "1.00",
+          "rangeMaximumValue": "4000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": null
+        },
+        "supplierProduct": {
+          "supplier": "1Voucher",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": "2500.00",
+          "rangeMinimumValue": null,
+          "rangeMaximumValue": null,
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009712728541"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 18,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-06T16:52:50.9570455",
+        "isActive": false,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-29T07:17:04.5237176",
+        "baseProduct": {
+          "name": "Vodacom Any Amount",
+          "manufacturer": "Vodacom",
+          "brand": "Vodacom",
+          "productCategory": "Airtime",
+          "validityType": null,
+          "validityValue": null,
+          "metricType": null,
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "2.00",
+          "rangeMaximumValue": "1000.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": {
+            "shortName": null,
+            "pinType": {
+              "id": 0,
+              "name": "Pinless"
+            },
+            "overrideValue": null,
+            "eeziAmount": null
+          }
+        },
+        "supplierProduct": {
+          "supplier": "Vodacom",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": null,
+          "rangeMinimumValue": "2.00",
+          "rangeMaximumValue": "1000.00",
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009880419777"
+            },
+            {
+              "type": "Supplier Product Code",
+              "value": "10000"
+            }
+          ]
+        }
+      },
+      {
+        "pimId": 19,
+        "publishedByUser": "jameel.parker@flash.co.za",
+        "publishedDate": "2026-06-06T18:16:23.1770929",
+        "isActive": false,
+        "isDeleted": false,
+        "modifiedDate": "2026-06-29T07:17:05.6944304",
+        "baseProduct": {
+          "name": "MTN Any Amount",
+          "manufacturer": "MTN",
+          "brand": "MTN",
+          "productCategory": "Airtime",
+          "validityType": null,
+          "validityValue": null,
+          "metricType": null,
+          "metricValue": null,
+          "redemptionType": "PIN-based",
+          "frequencyType": "Single Use",
+          "isFixedPrice": false,
+          "fixedValue": null,
+          "rangeMinimumValue": "2.00",
+          "rangeMaximumValue": "999.00",
+          "validFrom": null,
+          "validTo": null,
+          "isPromotional": false,
+          "cellularEnrichment": {
+            "shortName": null,
+            "pinType": {
+              "id": 0,
+              "name": "Pinless"
+            },
+            "overrideValue": null,
+            "eeziAmount": null
+          }
+        },
+        "supplierProduct": {
+          "supplier": "MTN",
+          "country": {
+            "name": "South Africa",
+            "code": "ZA"
+          },
+          "routingKeySales": null,
+          "routingKeyRedemption": null,
+          "scoreWeighting": null,
+          "buyRate": null,
+          "distributionBuySellDiscountRate": null,
+          "saleType": 0,
+          "fixedValue": null,
+          "rangeMinimumValue": "2.00",
+          "rangeMaximumValue": "999.00",
+          "productIdentifiers": [
+            {
+              "type": "Flash Internal Barcode",
+              "value": "6009880419746"
+            },
+            {
+              "type": "Supplier Product Code",
+              "value": "0"
+            }
+          ]
+        }
+      }
+    ],
+    "totalCount": 19,
+    "limit": 19,
+    "offset": 0
+  }
+}

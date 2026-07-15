@@ -221,6 +221,16 @@ async function attemptFinish(attemptId: string, status: 'completed' | 'failed', 
   failedStep?: RegStep; error?: string; steps?: Record<string, unknown>;
 }): Promise<void> {
   try {
+    // Avoid JSON.stringify throwing on unexpected bigint/etc. and silently leaving status='started'.
+    let stepsJson: string | null = null;
+    if (o.steps) {
+      try {
+        stepsJson = JSON.stringify(o.steps, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+      } catch (e) {
+        console.error('[register] steps JSON failed (non-fatal):', (e as Error).message);
+        stepsJson = JSON.stringify({ serializeError: (e as Error).message });
+      }
+    }
     await db.query(
       `UPDATE registration_attempts SET
          status       = $2,
@@ -230,7 +240,7 @@ async function attemptFinish(attemptId: string, status: 'completed' | 'failed', 
          steps        = $5,
          updated_at   = NOW()
        WHERE attempt_id = $1`,
-      [attemptId, status, o.failedStep ?? null, o.error ?? null, o.steps ? JSON.stringify(o.steps) : null],
+      [attemptId, status, o.failedStep ?? null, o.error ?? null, stepsJson],
     );
   } catch (e) { console.error('[register] attempt finish failed (non-fatal):', (e as Error).message); }
 }

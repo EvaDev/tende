@@ -22,6 +22,9 @@ interface Sale {
   consumer_wallet: string | null;
   tx_hash: string | null;
   status: string;
+  fulfilment_status: string | null;
+  escrow_tx: string | null;
+  release_tx: string | null;
   created_at: string;
 }
 interface StoreTill {
@@ -72,6 +75,16 @@ const saleCols: Col<Sale>[] = [
     render: s => s.latitude && s.longitude
       ? <a href={`https://maps.google.com/?q=${s.latitude},${s.longitude}`} target="_blank" rel="noreferrer" className="text-brand-accent underline text-xs">map</a>
       : <span className="text-gray-400">—</span> },
+  { key: 'status', header: 'Status', sort: s => s.status,
+    render: s => {
+      const label = s.status === 'pending_fulfilment' ? 'Fulfilling…'
+        : s.status === 'refunded' ? 'Refunded'
+        : s.status === 'paid' ? 'Paid' : s.status;
+      const cls = s.status === 'pending_fulfilment' ? 'bg-amber-100 text-amber-800'
+        : s.status === 'refunded' ? 'bg-red-100 text-red-700'
+        : 'bg-brand-accent/10 text-brand-accent';
+      return <span className={`text-xs px-2 py-1 rounded-lg ${cls}`}>{label}</span>;
+    } },
   { key: 'tx', header: 'Tx', render: s => s.tx_hash
       ? <a href={`https://sepolia.etherscan.io/tx/${s.tx_hash}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] underline hover:text-brand-accent">{shortAddr(s.tx_hash)}</a>
       : <span className="text-gray-400">—</span> },

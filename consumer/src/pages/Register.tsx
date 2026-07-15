@@ -68,6 +68,11 @@ function Select({ label, options, ...props }: React.SelectHTMLAttributes<HTMLSel
   );
 }
 
+function flagEmoji(code: string): string {
+  if (!code || code.length !== 2) return '🏳️';
+  return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
+
 const STEP_LABELS: Record<Step, string> = {
   mobile: 'Mobile Number', details: 'Personal Details', financial: 'Financial Profile',
   tag: 'Account Tag', wallet: 'Secure Account', success: '',
@@ -286,10 +291,12 @@ export default function Register() {
                     if (picked) setCountry(picked);
                   }}
                   aria-label="Country dial code"
-                  className="shrink-0 w-[5.5rem] bg-brand-card border border-brand-accent/20 rounded-xl px-2 py-3 text-sm text-brand-accent font-medium outline-none focus:ring-2 focus:ring-brand-accent"
+                  className="shrink-0 min-w-[7.5rem] max-w-[9rem] bg-brand-card border border-brand-accent/20 rounded-xl px-2 py-3 text-sm text-brand-accent font-medium outline-none focus:ring-2 focus:ring-brand-accent"
                 >
                   {countries.map(c => (
-                    <option key={c.code} value={c.code}>{c.dial_code}</option>
+                    <option key={c.code} value={c.code}>
+                      {flagEmoji(c.code)} {c.code} {c.dial_code}
+                    </option>
                   ))}
                 </select>
                 <input type="tel" placeholder="Phone number" value={form.mobile}
@@ -297,7 +304,9 @@ export default function Register() {
                   className="flex-1 bg-brand-card border border-brand-accent/20 rounded-xl px-4 py-3 text-sm text-brand-accent outline-none focus:ring-2 focus:ring-brand-accent" />
               </div>
               {country && (
-                <p className="text-xs text-white/70 px-1">{country.name}</p>
+                <p className="text-xs text-white/70 px-1">
+                  {flagEmoji(country.code)} {country.name} · {country.dial_code}
+                </p>
               )}
             </div>
             <Btn onClick={nextStep}>Continue <ChevronRight size={16} className="inline" /></Btn>

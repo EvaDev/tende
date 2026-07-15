@@ -42,6 +42,7 @@ import changeVoucherRouter from './changeVoucher.routes.js';
 import memberAuthRouter  from './memberAuth.routes.js';
 import settlementRouter  from './settlement.routes.js';
 import merchantSelfRouter from './merchantSelf.routes.js';
+import mockFulfilRouter  from './mockFulfil.routes.js';
 import { startIndexer }  from './indexerService.js';
 
 const app = express();
@@ -102,6 +103,7 @@ app.use('/api/change-voucher', changeVoucherRouter);
 app.use('/api/member-auth',   memberAuthRouter);
 app.use('/api/settlement',    settlementRouter);
 app.use('/api/merchant',      merchantSelfRouter);
+app.use('/api',               mockFulfilRouter);
 app.use('/api',               referenceRouter);
 
 // ── Server-Sent Events log stream ─────────────────────────────────────────────

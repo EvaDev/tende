@@ -8,6 +8,7 @@ interface TxDetail {
   source?: string; reference?: string;
   from?: string; to?: string; rate?: string; fee?: string;
   merchant?: string; store?: string; till?: string;
+  status?: string; fulfilmentStatus?: string;
   items?: { name: string; qty: number; unitPrice?: number; lineTotal?: number }[];
 }
 interface Tx {
@@ -109,7 +110,8 @@ export default function History() {
                 )}
               </>}
               {selected.detail?.type === 'purchase' && <>
-                {selected.detail.merchant && <Row label="Merchant" value={selected.detail.merchant} />}
+                {selected.detail.merchant && <Row label="Merchant" value={String(selected.detail.merchant)} />}
+                {selected.detail.status && <Row label="Status" value={String(selected.detail.status).replace(/_/g, ' ')} />}
                 {(selected.detail.store || selected.detail.till) && (
                   <Row label="Store / till" value={[selected.detail.store, selected.detail.till].filter(Boolean).join(' · ') || '—'} />
                 )}
